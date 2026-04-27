@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "cspuz_solver_backend"
-crate-type = ["cdylib", "lib"]
+crate-type = ["lib"]
 
 [[bin]]
 name = "cspuz_solver_backend_wasm"

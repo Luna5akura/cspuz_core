@@ -11,9 +11,6 @@ use board::Board;
 use cspuz_rs::serializer::{get_kudamono_url_info_detailed, url_to_puzzle_kind};
 pub use puzzle::{list_penpa_edit_puzzles, list_puzzles_for_enumerate, list_puzzles_for_solve};
 
-static mut SHARED_ARRAY: Vec<u8> = vec![];
-static mut INPUT_ARRAY: Vec<u8> = vec![];
-
 fn parse_penpa_edit_special_url(url: &str) -> Option<(&str, &str)> {
     let separator = url.find("!")?;
     let kind = &url[..separator];
@@ -110,68 +107,5 @@ pub fn solve_custom_travelline_json_from_bytes(payload: &[u8]) -> String {
         Err(err) => {
             format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
         }
-    }
-}
-
-#[no_mangle]
-fn prepare_input_buffer(len: usize) -> *mut u8 {
-    unsafe {
-        INPUT_ARRAY.clear();
-        INPUT_ARRAY.resize(len, 0);
-        INPUT_ARRAY.as_mut_ptr()
-    }
-}
-
-#[no_mangle]
-fn solve_problem(url: *const u8, len: usize) -> *const u8 {
-    let url = unsafe { std::slice::from_raw_parts(url, len) };
-    let ret_string = solve_problem_json_from_bytes(url);
-
-    let ret_len = ret_string.len();
-    unsafe {
-        SHARED_ARRAY.clear();
-        SHARED_ARRAY.reserve(4 + ret_len);
-        SHARED_ARRAY.push((ret_len & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 8) & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 16) & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 24) & 0xff) as u8);
-        SHARED_ARRAY.extend_from_slice(ret_string.as_bytes());
-        SHARED_ARRAY.as_ptr()
-    }
-}
-
-#[no_mangle]
-fn enumerate_answers_problem(url: *const u8, len: usize, num_max_answers: usize) -> *const u8 {
-    let url = unsafe { std::slice::from_raw_parts(url, len) };
-    let ret_string = enumerate_answers_json_from_bytes(url, num_max_answers);
-
-    let ret_len = ret_string.len();
-    unsafe {
-        SHARED_ARRAY.clear();
-        SHARED_ARRAY.reserve(4 + ret_len);
-        SHARED_ARRAY.push((ret_len & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 8) & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 16) & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 24) & 0xff) as u8);
-        SHARED_ARRAY.extend_from_slice(ret_string.as_bytes());
-        SHARED_ARRAY.as_ptr()
-    }
-}
-
-#[no_mangle]
-fn solve_custom_travelline(payload: *const u8, len: usize) -> *const u8 {
-    let payload = unsafe { std::slice::from_raw_parts(payload, len) };
-    let ret_string = solve_custom_travelline_json_from_bytes(payload);
-
-    let ret_len = ret_string.len();
-    unsafe {
-        SHARED_ARRAY.clear();
-        SHARED_ARRAY.reserve(4 + ret_len);
-        SHARED_ARRAY.push((ret_len & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 8) & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 16) & 0xff) as u8);
-        SHARED_ARRAY.push(((ret_len >> 24) & 0xff) as u8);
-        SHARED_ARRAY.extend_from_slice(ret_string.as_bytes());
-        SHARED_ARRAY.as_ptr()
     }
 }
