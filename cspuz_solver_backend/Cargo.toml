@@ -7,6 +7,10 @@ edition = "2021"
 name = "cspuz_solver_backend"
 crate-type = ["cdylib", "lib"]
 
+[[bin]]
+name = "cspuz_solver_backend_wasm"
+path = "src/bin/cspuz_solver_backend_wasm.rs"
+
 [dependencies]
 cspuz_rs = { path = "../cspuz_rs", default-features = false }
 cspuz_rs_puzzles = { path = "../cspuz_rs_puzzles", default-features = false }

@@ -69,6 +69,50 @@ fn solve_custom_travelline_payload(payload: &[u8]) -> Result<Board, &'static str
     custom_travelline::solve(&problem)
 }
 
+pub fn solve_problem_json_from_bytes(url: &[u8]) -> String {
+    let result = decode_and_solve(url);
+    match result {
+        Ok(board) => {
+            format!("{{\"status\":\"ok\",\"description\":{}}}", board.to_json())
+        }
+        Err(err) => {
+            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
+        }
+    }
+}
+
+pub fn enumerate_answers_json_from_bytes(url: &[u8], num_max_answers: usize) -> String {
+    let result = decode_and_enumerate(url, num_max_answers);
+    match result {
+        Ok((common, per_answer)) => {
+            format!(
+                "{{\"status\":\"ok\",\"description\":{{\"common\":{},\"answers\":[{}]}}}}",
+                common.to_json(),
+                per_answer
+                    .iter()
+                    .map(|x| x.to_json())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        Err(err) => {
+            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
+        }
+    }
+}
+
+pub fn solve_custom_travelline_json_from_bytes(payload: &[u8]) -> String {
+    let result = solve_custom_travelline_payload(payload);
+    match result {
+        Ok(board) => {
+            format!("{{\"status\":\"ok\",\"description\":{}}}", board.to_json())
+        }
+        Err(err) => {
+            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
+        }
+    }
+}
+
 #[no_mangle]
 fn prepare_input_buffer(len: usize) -> *mut u8 {
     unsafe {
@@ -81,17 +125,7 @@ fn prepare_input_buffer(len: usize) -> *mut u8 {
 #[no_mangle]
 fn solve_problem(url: *const u8, len: usize) -> *const u8 {
     let url = unsafe { std::slice::from_raw_parts(url, len) };
-    let result = decode_and_solve(url);
-
-    let ret_string = match result {
-        Ok(board) => {
-            format!("{{\"status\":\"ok\",\"description\":{}}}", board.to_json())
-        }
-        Err(err) => {
-            // TODO: escape `err` if necessary
-            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
-        }
-    };
+    let ret_string = solve_problem_json_from_bytes(url);
 
     let ret_len = ret_string.len();
     unsafe {
@@ -109,25 +143,7 @@ fn solve_problem(url: *const u8, len: usize) -> *const u8 {
 #[no_mangle]
 fn enumerate_answers_problem(url: *const u8, len: usize, num_max_answers: usize) -> *const u8 {
     let url = unsafe { std::slice::from_raw_parts(url, len) };
-    let result = decode_and_enumerate(url, num_max_answers);
-
-    let ret_string = match result {
-        Ok((common, per_answer)) => {
-            format!(
-                "{{\"status\":\"ok\",\"description\":{{\"common\":{},\"answers\":[{}]}}}}",
-                common.to_json(),
-                per_answer
-                    .iter()
-                    .map(|x| x.to_json())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        }
-        Err(err) => {
-            // TODO: escape `err` if necessary
-            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
-        }
-    };
+    let ret_string = enumerate_answers_json_from_bytes(url, num_max_answers);
 
     let ret_len = ret_string.len();
     unsafe {
@@ -145,16 +161,7 @@ fn enumerate_answers_problem(url: *const u8, len: usize, num_max_answers: usize)
 #[no_mangle]
 fn solve_custom_travelline(payload: *const u8, len: usize) -> *const u8 {
     let payload = unsafe { std::slice::from_raw_parts(payload, len) };
-    let result = solve_custom_travelline_payload(payload);
-
-    let ret_string = match result {
-        Ok(board) => {
-            format!("{{\"status\":\"ok\",\"description\":{}}}", board.to_json())
-        }
-        Err(err) => {
-            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
-        }
-    };
+    let ret_string = solve_custom_travelline_json_from_bytes(payload);
 
     let ret_len = ret_string.len();
     unsafe {

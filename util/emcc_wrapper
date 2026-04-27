@@ -17,7 +17,7 @@ def main():
     assert ext in [".wasm", ".js"]
     output = root + ".js"
 
-    if os.path.basename(root) == "cspuz_solver_backend":
+    if os.path.basename(root) in ["cspuz_solver_backend", "cspuz_solver_backend_wasm"]:
         extra_args += [
             "--no-entry",
             "-s",
