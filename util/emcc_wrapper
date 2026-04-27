@@ -21,7 +21,7 @@ def main():
         extra_args += [
             "--no-entry",
             "-s",
-            "EXPORTED_FUNCTIONS=_solve_problem,_enumerate_answers_problem,_solve_custom_travelline,_malloc,_free",
+            "EXPORTED_FUNCTIONS=_solve_problem,_enumerate_answers_problem,_solve_custom_travelline,_prepare_input_buffer",
         ]
 
     args = ["emcc", "-o", output] + extra_args

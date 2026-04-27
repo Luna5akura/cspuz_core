@@ -12,6 +12,7 @@ use cspuz_rs::serializer::{get_kudamono_url_info_detailed, url_to_puzzle_kind};
 pub use puzzle::{list_penpa_edit_puzzles, list_puzzles_for_enumerate, list_puzzles_for_solve};
 
 static mut SHARED_ARRAY: Vec<u8> = vec![];
+static mut INPUT_ARRAY: Vec<u8> = vec![];
 
 fn parse_penpa_edit_special_url(url: &str) -> Option<(&str, &str)> {
     let separator = url.find("!")?;
@@ -66,6 +67,15 @@ fn solve_custom_travelline_payload(payload: &[u8]) -> Result<Board, &'static str
         std::str::from_utf8(payload).map_err(|_| "failed to decode travelline payload as UTF-8")?;
     let problem = custom_travelline::deserialize_problem(payload)?;
     custom_travelline::solve(&problem)
+}
+
+#[no_mangle]
+fn prepare_input_buffer(len: usize) -> *mut u8 {
+    unsafe {
+        INPUT_ARRAY.clear();
+        INPUT_ARRAY.resize(len, 0);
+        INPUT_ARRAY.as_mut_ptr()
+    }
 }
 
 #[no_mangle]
