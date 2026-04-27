@@ -5,9 +5,9 @@ set -eux
 MODE=${1:-debug}
 
 if [ "$MODE" = "release" ]; then
-    cargo build --target wasm32-unknown-emscripten --release --no-default-features
+    cargo build -p cspuz_solver_backend --target wasm32-unknown-emscripten --release --no-default-features
 elif [ "$MODE" = "debug" ]; then
-    cargo build --target wasm32-unknown-emscripten --no-default-features
+    cargo build -p cspuz_solver_backend --target wasm32-unknown-emscripten --no-default-features
 else
     echo "Invalid mode: $MODE"
     exit 1

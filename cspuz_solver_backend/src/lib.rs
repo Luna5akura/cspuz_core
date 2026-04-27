@@ -3,6 +3,7 @@
 extern crate cspuz_rs;
 
 pub mod board;
+mod custom_travelline;
 mod puzzle;
 mod uniqueness;
 
@@ -60,6 +61,13 @@ fn decode_and_enumerate(
         .unwrap_or(Err("unknown puzzle type"))
 }
 
+fn solve_custom_travelline_payload(payload: &[u8]) -> Result<Board, &'static str> {
+    let payload =
+        std::str::from_utf8(payload).map_err(|_| "failed to decode travelline payload as UTF-8")?;
+    let problem = custom_travelline::deserialize_problem(payload)?;
+    custom_travelline::solve(&problem)
+}
+
 #[no_mangle]
 fn solve_problem(url: *const u8, len: usize) -> *const u8 {
     let url = unsafe { std::slice::from_raw_parts(url, len) };
@@ -107,6 +115,33 @@ fn enumerate_answers_problem(url: *const u8, len: usize, num_max_answers: usize)
         }
         Err(err) => {
             // TODO: escape `err` if necessary
+            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
+        }
+    };
+
+    let ret_len = ret_string.len();
+    unsafe {
+        SHARED_ARRAY.clear();
+        SHARED_ARRAY.reserve(4 + ret_len);
+        SHARED_ARRAY.push((ret_len & 0xff) as u8);
+        SHARED_ARRAY.push(((ret_len >> 8) & 0xff) as u8);
+        SHARED_ARRAY.push(((ret_len >> 16) & 0xff) as u8);
+        SHARED_ARRAY.push(((ret_len >> 24) & 0xff) as u8);
+        SHARED_ARRAY.extend_from_slice(ret_string.as_bytes());
+        SHARED_ARRAY.as_ptr()
+    }
+}
+
+#[no_mangle]
+fn solve_custom_travelline(payload: *const u8, len: usize) -> *const u8 {
+    let payload = unsafe { std::slice::from_raw_parts(payload, len) };
+    let result = solve_custom_travelline_payload(payload);
+
+    let ret_string = match result {
+        Ok(board) => {
+            format!("{{\"status\":\"ok\",\"description\":{}}}", board.to_json())
+        }
+        Err(err) => {
             format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
         }
     };
