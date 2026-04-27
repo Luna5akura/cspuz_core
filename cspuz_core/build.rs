@@ -3,11 +3,15 @@ use std::fs;
 
 fn cpp17_build() -> cc::Build {
     let mut ret = cc::Build::new();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 
     if ret.get_compiler().is_like_msvc() {
         ret.flag("/std:c++17");
     } else {
         ret.flag("-std=c++17");
+        if target_arch == "wasm32" {
+            ret.flag("-fPIC");
+        }
     }
 
     ret
