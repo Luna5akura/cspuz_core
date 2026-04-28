@@ -40,6 +40,8 @@ pub struct TravelLineProblem {
     directed: Vec<Vec<Option<DirectedClue>>>,
     required_h: Vec<Vec<bool>>,
     required_v: Vec<Vec<bool>>,
+    forced_h: Vec<Vec<i32>>,
+    forced_v: Vec<Vec<i32>>,
 }
 
 fn parse_side(value: &str) -> Option<Side> {
@@ -99,6 +101,33 @@ fn parse_directed_grid(
                     .ok_or("invalid directed clue side")?;
             let value = cell["value"].as_i32().ok_or("invalid directed clue value")?;
             ret[y][x] = Some(DirectedClue { kind, side, value });
+        }
+    }
+    Ok(ret)
+}
+
+fn parse_optional_state_grid(
+    src: &json::JsonValue,
+    rows: usize,
+    cols: usize,
+) -> Result<Vec<Vec<i32>>, &'static str> {
+    if src.is_null() {
+        return Ok(vec![vec![-1; cols]; rows]);
+    }
+    if !src.is_array() || src.len() != rows {
+        return Err("invalid forced state grid shape");
+    }
+    let mut ret = vec![vec![-1; cols]; rows];
+    for y in 0..rows {
+        if !src[y].is_array() || src[y].len() != cols {
+            return Err("invalid forced state grid shape");
+        }
+        for x in 0..cols {
+            let value = src[y][x].as_i32().ok_or("invalid forced state grid value")?;
+            if !(-1..=1).contains(&value) {
+                return Err("invalid forced state grid value");
+            }
+            ret[y][x] = value;
         }
     }
     Ok(ret)
@@ -205,6 +234,8 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
         directed: parse_directed_grid(&root["directed"], rows, cols)?,
         required_h: parse_bool_grid(&root["requiredH"], rows, cols.saturating_sub(1))?,
         required_v: parse_bool_grid(&root["requiredV"], rows.saturating_sub(1), cols)?,
+        forced_h: parse_optional_state_grid(&root["forcedH"], rows, cols.saturating_sub(1))?,
+        forced_v: parse_optional_state_grid(&root["forcedV"], rows.saturating_sub(1), cols)?,
     })
 }
 
@@ -215,6 +246,13 @@ fn neighbor_cell(y: usize, x: usize, rows: usize, cols: usize, side: Side) -> Op
         Side::Left => (x > 0).then_some((y, x - 1)),
         Side::Right => (x + 1 < cols).then_some((y, x + 1)),
     }
+}
+
+fn is_yajilin_clue_cell(problem: &TravelLineProblem, y: usize, x: usize) -> bool {
+    matches!(
+        problem.directed[y][x],
+        Some(DirectedClue { kind: 14, .. })
+    )
 }
 
 fn side_expr(
@@ -371,6 +409,21 @@ enum InnerEdgeRef {
 }
 
 fn is_sparse_local_only(problem: &TravelLineProblem) -> bool {
+    if problem
+        .forced_h
+        .iter()
+        .flatten()
+        .copied()
+        .any(|v| v != -1)
+        || problem
+            .forced_v
+            .iter()
+            .flatten()
+            .copied()
+            .any(|v| v != -1)
+    {
+        return false;
+    }
     for y in 0..problem.rows {
         for x in 0..problem.cols {
             if problem.ice[y][x]
@@ -672,11 +725,21 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
     for y in 0..rows {
         for x in 0..(cols - 1) {
             solver.add_expr(is_line.horizontal.at((y, x)).iff(aug_line.horizontal.at((y + 1, x + 1))));
+            match problem.forced_h[y][x] {
+                1 => solver.add_expr(is_line.horizontal.at((y, x))),
+                0 => solver.add_expr(!is_line.horizontal.at((y, x))),
+                _ => {}
+            }
         }
     }
     for y in 0..(rows - 1) {
         for x in 0..cols {
             solver.add_expr(is_line.vertical.at((y, x)).iff(aug_line.vertical.at((y + 1, x + 1))));
+            match problem.forced_v[y][x] {
+                1 => solver.add_expr(is_line.vertical.at((y, x))),
+                0 => solver.add_expr(!is_line.vertical.at((y, x))),
+                _ => {}
+            }
         }
     }
     for y in 0..rows {
@@ -907,28 +970,40 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 continue;
             }
 
-            if idx == problem.start || idx == problem.goal {
-                solver.add_expr(degree.eq(passed.ite(2, 0)));
-            } else {
-                solver.add_expr(degree.eq(is_cross.at((y, x)).ite(4, passed.ite(2, 0))));
-            }
-            if line_dir.is_some() {
-                if idx == problem.start {
+            let is_yajilin_clue = is_yajilin_clue_cell(problem, y, x);
+
+            if is_yajilin_clue {
+                solver.add_expr(!passed.expr());
+                solver.add_expr(!is_cross.at((y, x)));
+                solver.add_expr(degree.eq(0));
+                if line_dir.is_some() {
                     solver.add_expr(count_true(inbound).eq(0));
-                    solver.add_expr(count_true(outbound).eq(passed.ite(1, 0)));
-                    if let Some(rank) = &rank {
-                        solver.add_expr(rank.at((y, x)).eq(0));
-                    }
-                } else if idx == problem.goal {
-                    solver.add_expr(count_true(inbound).eq(passed.ite(1, 0)));
                     solver.add_expr(count_true(outbound).eq(0));
+                }
+            } else {
+                if idx == problem.start || idx == problem.goal {
+                    solver.add_expr(degree.eq(passed.ite(2, 0)));
                 } else {
-                    solver.add_expr(
-                        count_true(inbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
-                    );
-                    solver.add_expr(
-                        count_true(outbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
-                    );
+                    solver.add_expr(degree.eq(is_cross.at((y, x)).ite(4, passed.ite(2, 0))));
+                }
+                if line_dir.is_some() {
+                    if idx == problem.start {
+                        solver.add_expr(count_true(inbound).eq(0));
+                        solver.add_expr(count_true(outbound).eq(passed.ite(1, 0)));
+                        if let Some(rank) = &rank {
+                            solver.add_expr(rank.at((y, x)).eq(0));
+                        }
+                    } else if idx == problem.goal {
+                        solver.add_expr(count_true(inbound).eq(passed.ite(1, 0)));
+                        solver.add_expr(count_true(outbound).eq(0));
+                    } else {
+                        solver.add_expr(
+                            count_true(inbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
+                        );
+                        solver.add_expr(
+                            count_true(outbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
+                        );
+                    }
                 }
             }
 
@@ -964,7 +1039,7 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
             if let Some(clue) = problem.directed[y][x] {
                 let mut ray = vec![];
                 for (yy, xx) in directional_cells(y, x, rows, cols, clue.side) {
-                    if !problem.bars[yy][xx] {
+                    if !problem.bars[yy][xx] && !is_yajilin_clue_cell(problem, yy, xx) {
                         ray.push(!is_passed.at((yy, xx)).expr());
                     }
                 }
@@ -1108,10 +1183,10 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
 
             if problem.noadj[y][x] {
                 if y + 1 < rows && problem.noadj[y + 1][x] {
-                    solver.add_expr(is_passed.at((y, x)) | is_passed.at((y + 1, x)));
+                    solver.add_expr(!( !is_passed.at((y, x)) & !is_passed.at((y + 1, x)) ));
                 }
                 if x + 1 < cols && problem.noadj[y][x + 1] {
-                    solver.add_expr(is_passed.at((y, x)) | is_passed.at((y, x + 1)));
+                    solver.add_expr(!( !is_passed.at((y, x)) & !is_passed.at((y, x + 1)) ));
                 }
             }
             if problem.notouch[y][x] {
@@ -1289,6 +1364,42 @@ mod tests {
     }
 
     #[test]
+    fn test_travelline_backend_respects_forced_line_states() {
+        let payload = r#"{
+            "rows": 1,
+            "cols": 2,
+            "start": 0,
+            "goal": 1,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[false,false]],
+            "ice": [[false,false]],
+            "cwfloor": [[false,false]],
+            "noadj": [[false,false]],
+            "notouch": [[false,false]],
+            "sloop": [[false,false]],
+            "specials": [[-1,-1]],
+            "order": [[-1,-1]],
+            "divide": [[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false]],
+            "countryV": [],
+            "directed": [[null,null]],
+            "requiredH": [[true]],
+            "requiredV": [],
+            "forcedH": [[0]],
+            "forcedV": []
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_err(),
+            "contradictory forced line states should make travelline unsatisfiable"
+        );
+    }
+
+    #[test]
     fn test_travelline_backend_accepts_crossing_capable_floors() {
         let payload = r#"{
             "rows": 3,
@@ -1384,32 +1495,68 @@ mod tests {
     #[test]
     fn test_travelline_backend_accepts_simple_yajilin_clue() {
         let payload = r#"{
-            "rows": 1,
+            "rows": 2,
             "cols": 3,
-            "start": 0,
-            "goal": 2,
+            "start": 3,
+            "goal": 5,
             "startSide": "left",
             "goalSide": "right",
-            "bars": [[false,false,false]],
-            "ice": [[false,false,false]],
-            "cwfloor": [[false,false,false]],
-            "noadj": [[false,false,false]],
-            "notouch": [[false,false,false]],
-            "sloop": [[false,false,false]],
-            "specials": [[-1,-1,-1]],
-            "order": [[-1,-1,-1]],
-            "divide": [[0,0,0,0],[0,0,0,0]],
-            "slither": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
-            "countryH": [[false,false]],
-            "countryV": [],
-            "directed": [[{"kind":14,"side":"right","value":0},null,null]],
-            "requiredH": [[false,false]],
-            "requiredV": []
+            "bars": [[false,false,false],[false,false,false]],
+            "ice": [[false,false,false],[false,false,false]],
+            "cwfloor": [[false,false,false],[false,false,false]],
+            "noadj": [[false,false,false],[false,false,false]],
+            "notouch": [[false,false,false],[false,false,false]],
+            "sloop": [[false,false,false],[false,false,false]],
+            "specials": [[-1,-1,-1],[-1,-1,-1]],
+            "order": [[-1,-1,-1],[-1,-1,-1]],
+            "divide": [[0,0,0,0],[0,0,0,0],[0,0,0,0]],
+            "slither": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "countryH": [[false,false],[false,false]],
+            "countryV": [[false,false,false]],
+            "directed": [[{"kind":14,"side":"right","value":2},null,null],[null,null,null]],
+            "requiredH": [[false,false],[false,false]],
+            "requiredV": [[false,false,false]]
         }"#;
 
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
         assert!(board.is_ok(), "simple yajilin-style clue should solve in backend");
+    }
+
+    #[test]
+    fn test_travelline_backend_ignores_yajilin_cells_in_yajilin_ray_count() {
+        let payload = r#"{
+            "rows": 2,
+            "cols": 4,
+            "start": 4,
+            "goal": 7,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[false,false,false,false],[false,false,false,false]],
+            "ice": [[false,false,false,false],[false,false,false,false]],
+            "cwfloor": [[false,false,false,false],[false,false,false,false]],
+            "noadj": [[false,false,false,false],[false,false,false,false]],
+            "notouch": [[false,false,false,false],[false,false,false,false]],
+            "sloop": [[false,false,false,false],[false,false,false,false]],
+            "specials": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false],[false,false,false]],
+            "countryV": [[false,false,false,false]],
+            "directed": [[{"kind":14,"side":"right","value":2},null,{"kind":14,"side":"right","value":1},null],[null,null,null,null]],
+            "requiredH": [[false,false,false],[false,false,false]],
+            "requiredV": [[false,false,false,false]],
+            "forcedH": [[-1,-1,-1],[-1,1,1]],
+            "forcedV": [[-1,-1,-1,-1]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_ok(),
+            "yajilin clue cells in a ray should be ignored when counting unvisited cells"
+        );
     }
 
     #[test]
