@@ -709,13 +709,9 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 }
             }
 
-            let is_yajilin_clue = matches!(
-                problem.directed[y][x],
-                Some(DirectedClue { kind: 14, .. })
-            );
             let is_blocked_bar = problem.bars[y][x] && idx != problem.start && idx != problem.goal;
 
-            if is_blocked_bar || is_yajilin_clue {
+            if is_blocked_bar {
                 solver.add_expr(!passed.expr());
                 solver.add_expr(!is_cross.at((y, x)));
                 solver.add_expr(degree.eq(0));
@@ -723,7 +719,7 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 solver.add_expr(count_true(&outbound).eq(0));
             }
 
-            if !is_blocked_bar && !is_yajilin_clue {
+            if !is_blocked_bar {
                 if idx == problem.start || idx == problem.goal {
                     let endpoint_degree = if endpoint_has_outer_connector(problem, idx) {
                         2
@@ -1357,6 +1353,97 @@ mod tests {
     }
 
     #[test]
+    fn test_travelline_backend_allows_passing_through_yajilin_clue_cell() {
+        let payload = r#"{
+            "rows": 1,
+            "cols": 3,
+            "start": 0,
+            "goal": 2,
+            "startSide": "left",
+            "goalSide": "right",
+            "startOuterSide": "left",
+            "goalOuterSide": "right",
+            "startDir": null,
+            "goalDir": null,
+            "bars": [[false,false,false]],
+            "ice": [[false,false,false]],
+            "cwfloor": [[false,false,false]],
+            "noadj": [[false,false,false]],
+            "notouch": [[false,false,false]],
+            "sloop": [[false,false,false]],
+            "specials": [[-1,-1,-1]],
+            "order": [[-1,-1,-1]],
+            "divide": [[0,0,0,0],[0,0,0,0]],
+            "slither": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "countryH": [[false,false]],
+            "countryV": [],
+            "directed": [[null,{"kind":14,"side":"right","value":0},null]],
+            "requiredH": [[true,true]],
+            "requiredV": [],
+            "forcedH": [[-1,-1]],
+            "forcedV": []
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_ok(),
+            "a yajilin clue cell should be allowed to lie on the travel path when its count is satisfied"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_does_not_force_crosses_around_open_yajilin_clue_cell() {
+        let payload = r#"{
+            "rows": 3,
+            "cols": 3,
+            "start": 3,
+            "goal": 5,
+            "startSide": "left",
+            "goalSide": "right",
+            "startOuterSide": "left",
+            "goalOuterSide": "right",
+            "startDir": null,
+            "goalDir": null,
+            "bars": [[false,false,false],[false,false,false],[false,false,false]],
+            "ice": [[false,false,false],[false,false,false],[false,false,false]],
+            "cwfloor": [[false,false,false],[false,false,false],[false,false,false]],
+            "noadj": [[false,false,false],[false,false,false],[false,false,false]],
+            "notouch": [[false,false,false],[false,false,false],[false,false,false]],
+            "sloop": [[false,false,false],[false,false,false],[false,false,false]],
+            "specials": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "order": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "divide": [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]],
+            "slither": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "countryH": [[false,false],[false,false],[false,false]],
+            "countryV": [[false,false,false],[false,false,false]],
+            "directed": [[null,null,null],[null,{"kind":14,"side":"up","value":1},null],[null,null,null]],
+            "requiredH": [[false,false],[false,false],[false,false]],
+            "requiredV": [[false,false,false],[false,false,false]],
+            "forcedH": [[-1,-1],[-1,-1],[-1,-1]],
+            "forcedV": [[-1,-1,-1],[-1,-1,-1]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem).expect("backend should handle an open yajilin clue cell");
+        let json = board.to_json();
+        let cross_count_around_center = [
+            "{\"y\":2,\"x\":3,\"color\":\"green\",\"item\":\"cross\"}",
+            "{\"y\":4,\"x\":3,\"color\":\"green\",\"item\":\"cross\"}",
+            "{\"y\":3,\"x\":2,\"color\":\"green\",\"item\":\"cross\"}",
+            "{\"y\":3,\"x\":4,\"color\":\"green\",\"item\":\"cross\"}",
+        ]
+        .iter()
+        .filter(|needle| json.contains(*needle))
+        .count();
+
+        assert!(
+            cross_count_around_center < 4,
+            "an open yajilin clue cell should not be treated as an always-blocked cell by irrefutable facts"
+        );
+    }
+
+    #[test]
     fn test_travelline_backend_rejects_incorrect_yajilin_count() {
         let payload = r#"{
             "rows": 2,
@@ -1381,7 +1468,7 @@ mod tests {
             "slither": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
             "countryH": [[false],[false]],
             "countryV": [[false,false]],
-            "directed": [[{"kind":14,"side":"right","value":0},null],[null,null]],
+            "directed": [[{"kind":14,"side":"right","value":2},null],[null,null]],
             "requiredH": [[false],[false]],
             "requiredV": [[false,false]]
         }"#;
