@@ -457,6 +457,7 @@ fn is_sparse_local_only(problem: &TravelLineProblem) -> bool {
                 || problem.cwfloor[y][x]
                 || problem.noadj[y][x]
                 || problem.notouch[y][x]
+                || problem.sloop[y][x]
                 || problem.specials[y][x] != -1
                 || problem.order[y][x] >= 0
                 || problem.directed[y][x].is_some()
@@ -747,10 +748,61 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
         }
     }
 
+    let is_passed_single = &solver.bool_var_2d((rows, cols));
+    let is_passed_double_horizontal = &solver.bool_var_2d((rows, cols));
+    let is_passed_double_vertical = &solver.bool_var_2d((rows, cols));
+    solver.add_expr(is_passed_single.iff(is_passed & !is_cross));
+    solver.add_expr(is_passed_double_horizontal.iff(is_cross));
+    solver.add_expr(is_passed_double_vertical.iff(is_cross));
     {
-        let (edges, graph) = is_line.representation();
-        let line_graph = graph.line_graph();
-        graph::active_vertices_connected(&mut solver, &edges, &line_graph);
+        let mut connectivity_graph =
+            graph::Graph::new(rows * cols * 3 + (rows - 1) * cols + rows * (cols - 1));
+        let mut connectivity_vertices = vec![];
+        for y in 0..rows {
+            for x in 0..cols {
+                connectivity_vertices.push(is_passed_single.at((y, x)));
+                connectivity_vertices.push(is_passed_double_horizontal.at((y, x)));
+                connectivity_vertices.push(is_passed_double_vertical.at((y, x)));
+            }
+        }
+        for y in 0..(rows - 1) {
+            for x in 0..cols {
+                connectivity_vertices.push(is_line.vertical.at((y, x)));
+            }
+        }
+        for y in 0..rows {
+            for x in 0..(cols - 1) {
+                connectivity_vertices.push(is_line.horizontal.at((y, x)));
+            }
+        }
+        for y in 0..(rows - 1) {
+            for x in 0..cols {
+                let eid = rows * cols * 3 + y * cols + x;
+                let v0 = (y * cols + x) * 3;
+                let v1 = ((y + 1) * cols + x) * 3;
+                connectivity_graph.add_edge(eid, v0);
+                connectivity_graph.add_edge(eid, v0 + 2);
+                connectivity_graph.add_edge(eid, v1);
+                connectivity_graph.add_edge(eid, v1 + 2);
+            }
+        }
+        for y in 0..rows {
+            for x in 0..(cols - 1) {
+                let eid =
+                    rows * cols * 3 + (rows - 1) * cols + y * (cols - 1) + x;
+                let v0 = (y * cols + x) * 3;
+                let v1 = (y * cols + x + 1) * 3;
+                connectivity_graph.add_edge(eid, v0);
+                connectivity_graph.add_edge(eid, v0 + 1);
+                connectivity_graph.add_edge(eid, v1);
+                connectivity_graph.add_edge(eid, v1 + 1);
+            }
+        }
+        graph::active_vertices_connected(
+            &mut solver,
+            &connectivity_vertices,
+            &connectivity_graph,
+        );
     }
 
     for y in 0..rows {
@@ -1962,34 +2014,117 @@ mod tests {
     }
 
     #[test]
-    fn test_travelline_sparse_local_fast_path_for_corner_sloop() {
+    fn test_travelline_backend_rejects_sloop_loop_disconnected_by_crossing() {
         let payload = r#"{
-            "rows": 4,
-            "cols": 4,
-            "start": 0,
-            "goal": 15,
-            "startSide": "up",
-            "goalSide": "down",
-            "bars": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
-            "ice": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
-            "cwfloor": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
-            "noadj": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
-            "notouch": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
-            "sloop": [[false,false,false,true],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
-            "specials": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
-            "order": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
-            "divide": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
-            "slither": [[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1]],
-            "countryH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
-            "countryV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
-            "directed": [[null,null,null,null],[null,null,null,null],[null,null,null,null],[null,null,null,null]],
-            "requiredH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
-            "requiredV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]]
+            "rows": 7,
+            "cols": 7,
+            "start": 23,
+            "goal": 25,
+            "startSide": null,
+            "goalSide": null,
+            "startOuterSide": null,
+            "goalOuterSide": null,
+            "startDir": "right",
+            "goalDir": "right",
+            "bars": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,true,false,true,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "ice": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,true,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "cwfloor": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "noadj": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "notouch": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "sloop": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,true,true,true,false,false,false],[false,true,false,false,false,false,false],[false,true,true,true,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "specials": [[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false]],
+            "countryV": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "directed": [[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null]],
+            "requiredH": [[false,false,false,false,false,false],[false,false,false,false,false,false],[false,true,true,false,false,false],[false,false,true,false,false,false],[false,true,true,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false]],
+            "requiredV": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,true,false,true,false,false,false],[false,true,false,true,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]]
         }"#;
 
         let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_err(),
+            "a sloop-only cycle that merely crosses the main path at an ice cell must not count as connected"
+        );
+    }
+
+    #[test]
+    fn test_travelline_sparse_local_fast_path_for_simple_open_path() {
+        let payload = r#"{
+            "rows": 1,
+            "cols": 2,
+            "start": 0,
+            "goal": 1,
+            "startSide": "up",
+            "goalSide": "down",
+            "bars": [[false,false]],
+            "ice": [[false,false]],
+            "cwfloor": [[false,false]],
+            "noadj": [[false,false]],
+            "notouch": [[false,false]],
+            "sloop": [[false,false]],
+            "specials": [[-1,-1]],
+            "order": [[-1,-1]],
+            "divide": [[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false]],
+            "countryV": [],
+            "directed": [[null,null]],
+            "requiredH": [[false]],
+            "requiredV": [],
+            "forcedH": [[-1]],
+            "forcedV": []
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        assert!(is_sparse_local_only(&problem));
         let facts = deduce_sparse_local_irrefutable(&problem).expect("fast path should deduce");
-        assert_eq!(facts.horizontal[0][2], Some(true));
-        assert_eq!(facts.vertical[0][3], Some(true));
+        assert_eq!(facts.horizontal[0][0], Some(true));
+    }
+
+    #[test]
+    fn test_travelline_sloop_puzzle_skips_sparse_local_fast_path() {
+        let payload = r#"{
+            "rows": 3,
+            "cols": 3,
+            "start": 1,
+            "goal": 2,
+            "startSide": "up",
+            "goalSide": "up",
+            "startOuterSide": "up",
+            "goalOuterSide": "up",
+            "startDir": null,
+            "goalDir": null,
+            "bars": [[true,false,false],[false,false,false],[false,false,true]],
+            "ice": [[false,false,false],[false,false,false],[false,false,false]],
+            "cwfloor": [[false,false,false],[false,false,false],[false,false,false]],
+            "noadj": [[false,false,false],[false,false,false],[false,false,false]],
+            "notouch": [[false,false,false],[false,false,false],[false,false,false]],
+            "sloop": [[false,false,false],[true,true,false],[true,true,false]],
+            "specials": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "order": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "divide": [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]],
+            "slither": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "countryH": [[false,false],[false,false],[false,false]],
+            "countryV": [[false,false,false],[false,false,false]],
+            "directed": [[null,null,null],[null,null,null],[null,null,null]],
+            "requiredH": [[false,false],[false,false],[false,false]],
+            "requiredV": [[false,false,false],[false,false,false]],
+            "forcedH": [[-1,-1],[-1,-1],[-1,-1]],
+            "forcedV": [[-1,-1,-1],[-1,-1,-1]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        assert!(
+            !is_sparse_local_only(&problem),
+            "sloop constraints need the full connectivity-aware solver, not the sparse local fast path"
+        );
+        assert!(
+            solve(&problem).is_err(),
+            "the 2x2 sloop block in this puzzle should not be accepted as a disconnected loop"
+        );
     }
 }
