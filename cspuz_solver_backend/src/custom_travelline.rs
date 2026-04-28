@@ -872,27 +872,21 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 }
             }
 
-            if problem.bars[y][x] && idx != problem.start && idx != problem.goal {
-                solver.add_expr(!passed);
-                solver.add_expr(!is_cross.at((y, x)));
-                solver.add_expr(degree.eq(0));
-                solver.add_expr(count_true(inbound).eq(0));
-                solver.add_expr(count_true(outbound).eq(0));
-                continue;
-            }
-
             let is_yajilin_clue = matches!(
                 problem.directed[y][x],
                 Some(DirectedClue { kind: 14, .. })
             );
+            let is_blocked_bar = problem.bars[y][x] && idx != problem.start && idx != problem.goal;
 
-            if is_yajilin_clue {
+            if is_blocked_bar || is_yajilin_clue {
                 solver.add_expr(!passed.expr());
                 solver.add_expr(!is_cross.at((y, x)));
                 solver.add_expr(degree.eq(0));
-                solver.add_expr(count_true(inbound).eq(0));
-                solver.add_expr(count_true(outbound).eq(0));
-            } else {
+                solver.add_expr(count_true(&inbound).eq(0));
+                solver.add_expr(count_true(&outbound).eq(0));
+            }
+
+            if !is_blocked_bar && !is_yajilin_clue {
                 if idx == problem.start || idx == problem.goal {
                     let endpoint_degree = if endpoint_has_outer_connector(problem, idx) {
                         2
@@ -1473,6 +1467,82 @@ mod tests {
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
         assert!(board.is_ok(), "simple yajilin-style clue should solve in backend");
+    }
+
+    #[test]
+    fn test_travelline_backend_rejects_incorrect_yajilin_count() {
+        let payload = r#"{
+            "rows": 2,
+            "cols": 2,
+            "start": 2,
+            "goal": 3,
+            "startSide": "left",
+            "goalSide": "right",
+            "startOuterSide": "left",
+            "goalOuterSide": "right",
+            "startDir": null,
+            "goalDir": null,
+            "bars": [[false,false],[false,false]],
+            "ice": [[false,false],[false,false]],
+            "cwfloor": [[false,false],[false,false]],
+            "noadj": [[false,false],[false,false]],
+            "notouch": [[false,false],[false,false]],
+            "sloop": [[false,false],[false,false]],
+            "specials": [[-1,-1],[-1,-1]],
+            "order": [[-1,-1],[-1,-1]],
+            "divide": [[0,0,0],[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false],[false]],
+            "countryV": [[false,false]],
+            "directed": [[{"kind":14,"side":"right","value":0},null],[null,null]],
+            "requiredH": [[false],[false]],
+            "requiredV": [[false,false]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_err(),
+            "a forced-unpassed count mismatch in a yajilin clue should make the backend unsatisfiable"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_rejects_incorrect_yajilin_count_on_bar_clue_cell() {
+        let payload = r#"{
+            "rows": 2,
+            "cols": 2,
+            "start": 2,
+            "goal": 3,
+            "startSide": "left",
+            "goalSide": "right",
+            "startOuterSide": "left",
+            "goalOuterSide": "right",
+            "startDir": null,
+            "goalDir": null,
+            "bars": [[true,false],[false,false]],
+            "ice": [[false,false],[false,false]],
+            "cwfloor": [[false,false],[false,false]],
+            "noadj": [[false,false],[false,false]],
+            "notouch": [[false,false],[false,false]],
+            "sloop": [[false,false],[false,false]],
+            "specials": [[-1,-1],[-1,-1]],
+            "order": [[-1,-1],[-1,-1]],
+            "divide": [[0,0,0],[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false],[false]],
+            "countryV": [[false,false]],
+            "directed": [[{"kind":14,"side":"right","value":0},null],[null,null]],
+            "requiredH": [[false],[false]],
+            "requiredV": [[false,false]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_err(),
+            "a yajilin clue must still constrain the backend even when the clue cell itself is a bar"
+        );
     }
 
     #[test]
