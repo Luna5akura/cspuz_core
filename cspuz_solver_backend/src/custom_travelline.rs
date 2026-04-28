@@ -293,6 +293,24 @@ fn opposite_side(side: Side) -> Side {
     }
 }
 
+fn clockwise_turn_exit(side: Side) -> Side {
+    match side {
+        Side::Up => Side::Left,
+        Side::Left => Side::Down,
+        Side::Down => Side::Right,
+        Side::Right => Side::Up,
+    }
+}
+
+fn clockwise_turn_entry(side: Side) -> Side {
+    match side {
+        Side::Up => Side::Right,
+        Side::Right => Side::Down,
+        Side::Down => Side::Left,
+        Side::Left => Side::Up,
+    }
+}
+
 fn endpoint_outer_side(problem: &TravelLineProblem, idx: usize) -> Option<Side> {
     if idx == problem.start {
         problem.start_outer_side
@@ -1157,13 +1175,63 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 solver.add_expr(&passed);
             }
             if problem.ice[y][x] {
-                solver.add_expr((passed.expr() & !is_cross.at((y, x))).imp(straight.clone()));
+                if idx == problem.start {
+                    if let Some(outer_side) = problem.start_outer_side {
+                        let straight_with_outer = match opposite_side(outer_side) {
+                            Side::Up => outbound_up.clone(),
+                            Side::Down => outbound_down.clone(),
+                            Side::Left => outbound_left.clone(),
+                            Side::Right => outbound_right.clone(),
+                        };
+                        solver.add_expr(
+                            (passed.expr() & !is_cross.at((y, x))).imp(straight_with_outer),
+                        );
+                    }
+                } else if idx == problem.goal {
+                    if let Some(outer_side) = problem.goal_outer_side {
+                        let straight_with_outer = match opposite_side(outer_side) {
+                            Side::Up => inbound_up.clone(),
+                            Side::Down => inbound_down.clone(),
+                            Side::Left => inbound_left.clone(),
+                            Side::Right => inbound_right.clone(),
+                        };
+                        solver.add_expr(
+                            (passed.expr() & !is_cross.at((y, x))).imp(straight_with_outer),
+                        );
+                    }
+                } else {
+                    solver.add_expr((passed.expr() & !is_cross.at((y, x))).imp(straight.clone()));
+                }
             }
             if problem.cwfloor[y][x] {
-                let right_turn = (inbound_up & outbound_right)
-                    | (inbound_right & outbound_down)
-                    | (inbound_down & outbound_left)
-                    | (inbound_left & outbound_up);
+                let right_turn = if idx == problem.start {
+                    if let Some(outer_side) = problem.start_outer_side {
+                        match clockwise_turn_exit(outer_side) {
+                            Side::Up => outbound_up.clone(),
+                            Side::Down => outbound_down.clone(),
+                            Side::Left => outbound_left.clone(),
+                            Side::Right => outbound_right.clone(),
+                        }
+                    } else {
+                        !TRUE
+                    }
+                } else if idx == problem.goal {
+                    if let Some(outer_side) = problem.goal_outer_side {
+                        match clockwise_turn_entry(outer_side) {
+                            Side::Up => inbound_up.clone(),
+                            Side::Down => inbound_down.clone(),
+                            Side::Left => inbound_left.clone(),
+                            Side::Right => inbound_right.clone(),
+                        }
+                    } else {
+                        !TRUE
+                    }
+                } else {
+                    (inbound_up & outbound_left)
+                        | (inbound_left & outbound_down)
+                        | (inbound_down & outbound_right)
+                        | (inbound_right & outbound_up)
+                };
                 solver.add_expr((curve.clone() & !is_cross.at((y, x))).imp(right_turn));
             }
         }
@@ -1753,6 +1821,144 @@ mod tests {
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
         assert!(board.is_ok(), "order clue should work with crossing-capable floors when not crossed");
+    }
+
+    #[test]
+    fn test_travelline_backend_accepts_simple_cwfloor_endpoint_straight_path() {
+        let payload = r#"{
+            "rows": 2,
+            "cols": 4,
+            "start": 4,
+            "goal": 7,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[false,false,false,false],[false,false,false,false]],
+            "ice": [[false,false,false,false],[false,false,false,false]],
+            "cwfloor": [[true,true,true,true],[true,true,true,true]],
+            "noadj": [[false,false,false,false],[false,false,false,false]],
+            "notouch": [[false,false,false,false],[false,false,false,false]],
+            "sloop": [[false,false,false,false],[false,false,false,false]],
+            "specials": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false],[false,false,false]],
+            "countryV": [[false,false,false,false]],
+            "directed": [[null,null,null,null],[null,null,null,null]],
+            "requiredH": [[false,false,false],[true,true,true]],
+            "requiredV": [[false,false,false,false]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(board.is_ok(), "clockwise floors should allow a straight path through start and goal arrows");
+    }
+
+    #[test]
+    fn test_travelline_backend_rejects_left_turns_at_cwfloor_start_and_goal() {
+        let payload = r#"{
+            "rows": 2,
+            "cols": 4,
+            "start": 4,
+            "goal": 7,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[false,false,false,false],[false,false,false,false]],
+            "ice": [[false,false,false,false],[false,false,false,false]],
+            "cwfloor": [[true,true,true,true],[true,true,true,true]],
+            "noadj": [[false,false,false,false],[false,false,false,false]],
+            "notouch": [[false,false,false,false],[false,false,false,false]],
+            "sloop": [[false,false,false,false],[false,false,false,false]],
+            "specials": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false],[false,false,false]],
+            "countryV": [[false,false,false,false]],
+            "directed": [[null,null,null,null],[null,null,null,null]],
+            "requiredH": [[true,true,true],[false,false,false]],
+            "requiredV": [[true,false,false,true]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_err(),
+            "clockwise floors should not allow left turns at start or goal when the outer arrows fix the travel direction"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_all_cwfloor_blank_board_is_not_unique() {
+        let payload = r#"{
+            "rows": 4,
+            "cols": 4,
+            "start": 4,
+            "goal": 7,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "ice": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "cwfloor": [[true,true,true,true],[true,true,true,true],[true,true,true,true],[true,true,true,true]],
+            "noadj": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "notouch": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "sloop": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "specials": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "countryV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "directed": [[null,null,null,null],[null,null,null,null],[null,null,null,null],[null,null,null,null]],
+            "requiredH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "requiredV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem).expect("board should solve");
+        let json = board.to_json();
+        assert!(
+            json.contains("\"isUnique\":false"),
+            "an unconstrained all-clockwise-floor board should not collapse to a unique forced path"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_rejects_dense_sloop_cwfloor_with_left_turn_endpoints() {
+        let payload = r#"{
+            "rows": 6,
+            "cols": 7,
+            "start": 37,
+            "goal": 13,
+            "startSide": "down",
+            "goalSide": "right",
+            "startOuterSide": "down",
+            "goalOuterSide": "right",
+            "startDir": null,
+            "goalDir": null,
+            "bars": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "ice": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "cwfloor": [[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true]],
+            "noadj": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "notouch": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "sloop": [[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true],[true,true,true,true,true,true,true]],
+            "specials": [[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false]],
+            "countryV": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]],
+            "directed": [[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null],[null,null,null,null,null,null,null]],
+            "requiredH": [[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false],[false,false,false,false,false,false]],
+            "requiredV": [[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false],[false,false,false,false,false,false,false]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_err(),
+            "a dense sloop+clockwise board whose start and goal immediately make left turns should be rejected"
+        );
     }
 
     #[test]
