@@ -23,8 +23,10 @@ pub struct TravelLineProblem {
     cols: usize,
     start: usize,
     goal: usize,
-    start_side: Side,
-    goal_side: Side,
+    start_outer_side: Option<Side>,
+    goal_outer_side: Option<Side>,
+    start_dir: Option<Side>,
+    goal_dir: Option<Side>,
     bars: Vec<Vec<bool>>,
     ice: Vec<Vec<bool>>,
     cwfloor: Vec<Vec<bool>>,
@@ -52,6 +54,14 @@ fn parse_side(value: &str) -> Option<Side> {
         "right" => Some(Side::Right),
         _ => None,
     }
+}
+
+fn parse_optional_side(src: &json::JsonValue) -> Result<Option<Side>, &'static str> {
+    if src.is_null() {
+        return Ok(None);
+    }
+    let value = src.as_str().ok_or("invalid side value")?;
+    parse_side(value).ok_or("invalid side value").map(Some)
 }
 
 fn parse_bool_grid(
@@ -145,20 +155,46 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
     if start >= rows * cols || goal >= rows * cols {
         return Err("travelline start/goal out of range");
     }
-    let start_side =
-        parse_side(root["startSide"].as_str().ok_or("travelline start side missing")?)
-            .ok_or("travelline start side invalid")?;
-    let goal_side =
-        parse_side(root["goalSide"].as_str().ok_or("travelline goal side missing")?)
-            .ok_or("travelline goal side invalid")?;
+    let start_outer_side = if root.has_key("startOuterSide") {
+        parse_optional_side(&root["startOuterSide"]).map_err(|_| "travelline start outer side invalid")?
+    } else if root["startSide"].is_null() {
+        None
+    } else {
+        parse_optional_side(&root["startSide"]).map_err(|_| "travelline start side invalid")?
+    };
+    let goal_outer_side = if root.has_key("goalOuterSide") {
+        parse_optional_side(&root["goalOuterSide"]).map_err(|_| "travelline goal outer side invalid")?
+    } else if root["goalSide"].is_null() {
+        None
+    } else {
+        parse_optional_side(&root["goalSide"]).map_err(|_| "travelline goal side invalid")?
+    };
+    let start_dir = if root.has_key("startDir") {
+        parse_optional_side(&root["startDir"]).map_err(|_| "travelline start dir invalid")?
+    } else {
+        None
+    };
+    let goal_dir = if root.has_key("goalDir") {
+        parse_optional_side(&root["goalDir"]).map_err(|_| "travelline goal dir invalid")?
+    } else {
+        None
+    };
+    if start_outer_side.is_none() && start_dir.is_none() {
+        return Err("travelline start endpoint missing");
+    }
+    if goal_outer_side.is_none() && goal_dir.is_none() {
+        return Err("travelline goal endpoint missing");
+    }
 
     Ok(TravelLineProblem {
         rows,
         cols,
         start,
         goal,
-        start_side,
-        goal_side,
+        start_outer_side,
+        goal_outer_side,
+        start_dir,
+        goal_dir,
         bars: parse_bool_grid(&root["bars"], rows, cols)?,
         ice: parse_bool_grid(&root["ice"], rows, cols)?,
         cwfloor: parse_bool_grid(&root["cwfloor"], rows, cols)?,
@@ -248,11 +284,37 @@ fn neighbor_cell(y: usize, x: usize, rows: usize, cols: usize, side: Side) -> Op
     }
 }
 
-fn is_yajilin_clue_cell(problem: &TravelLineProblem, y: usize, x: usize) -> bool {
-    matches!(
-        problem.directed[y][x],
-        Some(DirectedClue { kind: 14, .. })
-    )
+fn opposite_side(side: Side) -> Side {
+    match side {
+        Side::Up => Side::Down,
+        Side::Down => Side::Up,
+        Side::Left => Side::Right,
+        Side::Right => Side::Left,
+    }
+}
+
+fn endpoint_outer_side(problem: &TravelLineProblem, idx: usize) -> Option<Side> {
+    if idx == problem.start {
+        problem.start_outer_side
+    } else if idx == problem.goal {
+        problem.goal_outer_side
+    } else {
+        None
+    }
+}
+
+fn endpoint_has_outer_connector(problem: &TravelLineProblem, idx: usize) -> bool {
+    endpoint_outer_side(problem, idx).is_some()
+}
+
+fn endpoint_allowed_inner_side(problem: &TravelLineProblem, idx: usize) -> Option<Side> {
+    if idx == problem.start {
+        problem.start_dir
+    } else if idx == problem.goal {
+        problem.goal_dir.map(opposite_side)
+    } else {
+        None
+    }
 }
 
 fn side_expr(
@@ -264,16 +326,16 @@ fn side_expr(
     side: Side,
     start: usize,
     goal: usize,
-    start_side: Side,
-    goal_side: Side,
+    start_outer_side: Option<Side>,
+    goal_outer_side: Option<Side>,
 ) -> cspuz_rs::solver::BoolExpr {
     let idx = y * cols + x;
     match side {
         Side::Up => {
             if y > 0 {
                 is_line.vertical.at((y - 1, x)).expr()
-            } else if (idx == start && start_side == Side::Up)
-                || (idx == goal && goal_side == Side::Up)
+            } else if (idx == start && start_outer_side == Some(Side::Up))
+                || (idx == goal && goal_outer_side == Some(Side::Up))
             {
                 TRUE
             } else {
@@ -283,8 +345,8 @@ fn side_expr(
         Side::Down => {
             if y + 1 < rows {
                 is_line.vertical.at((y, x)).expr()
-            } else if (idx == start && start_side == Side::Down)
-                || (idx == goal && goal_side == Side::Down)
+            } else if (idx == start && start_outer_side == Some(Side::Down))
+                || (idx == goal && goal_outer_side == Some(Side::Down))
             {
                 TRUE
             } else {
@@ -294,8 +356,8 @@ fn side_expr(
         Side::Left => {
             if x > 0 {
                 is_line.horizontal.at((y, x - 1)).expr()
-            } else if (idx == start && start_side == Side::Left)
-                || (idx == goal && goal_side == Side::Left)
+            } else if (idx == start && start_outer_side == Some(Side::Left))
+                || (idx == goal && goal_outer_side == Some(Side::Left))
             {
                 TRUE
             } else {
@@ -305,8 +367,8 @@ fn side_expr(
         Side::Right => {
             if x + 1 < cols {
                 is_line.horizontal.at((y, x)).expr()
-            } else if (idx == start && start_side == Side::Right)
-                || (idx == goal && goal_side == Side::Right)
+            } else if (idx == start && start_outer_side == Some(Side::Right))
+                || (idx == goal && goal_outer_side == Some(Side::Right))
             {
                 TRUE
             } else {
@@ -347,59 +409,6 @@ fn directional_cells(
         }
     }
     ret
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AugEdge {
-    Horizontal(usize, usize),
-    Vertical(usize, usize),
-}
-
-fn actual_cell_to_aug(y: usize, x: usize) -> (usize, usize) {
-    (y + 1, x + 1)
-}
-
-fn connector_edge(y: usize, x: usize, side: Side) -> AugEdge {
-    match side {
-        Side::Up => AugEdge::Vertical(y, x + 1),
-        Side::Down => AugEdge::Vertical(y + 1, x + 1),
-        Side::Left => AugEdge::Horizontal(y + 1, x),
-        Side::Right => AugEdge::Horizontal(y + 1, x + 1),
-    }
-}
-
-fn outer_vertex(y: usize, x: usize, side: Side) -> (usize, usize) {
-    match side {
-        Side::Up => (y, x + 1),
-        Side::Down => (y + 2, x + 1),
-        Side::Left => (y + 1, x),
-        Side::Right => (y + 1, x + 2),
-    }
-}
-
-fn perimeter_vertices(height: usize, width: usize) -> Vec<(usize, usize)> {
-    let mut ret = vec![];
-    for x in 0..width {
-        ret.push((0, x));
-    }
-    for y in 1..(height - 1) {
-        ret.push((y, width - 1));
-    }
-    for x in (0..width).rev() {
-        ret.push((height - 1, x));
-    }
-    for y in (1..(height - 1)).rev() {
-        ret.push((y, 0));
-    }
-    ret
-}
-
-fn edge_between(a: (usize, usize), b: (usize, usize)) -> AugEdge {
-    if a.0 == b.0 {
-        AugEdge::Horizontal(a.0, a.1.min(b.1))
-    } else {
-        AugEdge::Vertical(a.0.min(b.0), a.1)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -533,30 +542,60 @@ fn deduce_sparse_local_irrefutable(
         }
     }
 
+    for y in 0..rows {
+        for x in 0..cols {
+            let idx = y * cols + x;
+            let Some(allowed_side) = endpoint_allowed_inner_side(problem, idx) else {
+                continue;
+            };
+            if !problem.bars[y][x] {
+                continue;
+            }
+            let mut has_allowed_edge = false;
+            for edge in incident_edges(y, x, rows, cols) {
+                let is_allowed = matches!(
+                    (edge, allowed_side),
+                    (InnerEdgeRef::Vertical(yy, xx), Side::Up) if yy + 1 == y && xx == x
+                ) || matches!(
+                    (edge, allowed_side),
+                    (InnerEdgeRef::Vertical(yy, xx), Side::Down) if yy == y && xx == x
+                ) || matches!(
+                    (edge, allowed_side),
+                    (InnerEdgeRef::Horizontal(yy, xx), Side::Left) if yy == y && xx + 1 == x
+                ) || matches!(
+                    (edge, allowed_side),
+                    (InnerEdgeRef::Horizontal(yy, xx), Side::Right) if yy == y && xx == x
+                );
+                if is_allowed {
+                    has_allowed_edge = true;
+                } else {
+                    set_edge(&mut horizontal, &mut vertical, edge, false)?;
+                }
+            }
+            if !has_allowed_edge {
+                return Err("travelline endpoint bar direction invalid");
+            }
+        }
+    }
+
     loop {
         let mut changed = false;
         for y in 0..rows {
             for x in 0..cols {
                 let idx = y * cols + x;
-                let mut exact_total_degree = None;
-                if problem.bars[y][x] {
-                    exact_total_degree = Some(0);
+                let mut exact_inner_degree = None;
+                if problem.bars[y][x] && idx != problem.start && idx != problem.goal {
+                    exact_inner_degree = Some(0);
                 } else if problem.sloop[y][x] || idx == problem.start || idx == problem.goal {
-                    exact_total_degree = Some(2);
+                    exact_inner_degree = Some(if idx == problem.start || idx == problem.goal {
+                        1
+                    } else {
+                        2
+                    });
                 }
-                let Some(total_degree) = exact_total_degree else {
+                let Some(required_inner) = exact_inner_degree else {
                     continue;
                 };
-
-                let outer_true = if idx == problem.start || idx == problem.goal {
-                    1
-                } else {
-                    0
-                };
-                if total_degree < outer_true {
-                    return Err("travelline local fast-path contradiction");
-                }
-                let required_inner = total_degree - outer_true;
                 let edges = incident_edges(y, x, rows, cols);
                 let mut true_count = 0usize;
                 let mut unknown = vec![];
@@ -600,10 +639,6 @@ fn deduce_sparse_local_irrefutable(
 pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
     let rows = problem.rows;
     let cols = problem.cols;
-    let start_y = problem.start / cols;
-    let start_x = problem.start % cols;
-    let goal_y = problem.goal / cols;
-    let goal_x = problem.goal % cols;
 
     for y in 0..rows {
         for x in 0..cols {
@@ -645,63 +680,28 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
         return Ok(board);
     }
 
-    let has_crossing_capable = problem
-        .ice
-        .iter()
-        .flatten()
-        .copied()
-        .any(|v| v)
-        || problem
-            .cwfloor
-            .iter()
-            .flatten()
-            .copied()
-            .any(|v| v);
     let has_order = problem
         .order
         .iter()
         .flatten()
         .copied()
         .any(|v| v >= 0);
-    let has_cwfloor = problem
-        .cwfloor
-        .iter()
-        .flatten()
-        .copied()
-        .any(|v| v);
     let has_divide = problem
         .divide
         .iter()
         .flatten()
         .copied()
         .any(|v| v > 0);
-    let use_direction = has_order || has_cwfloor;
 
     let mut solver = Solver::new();
     let is_line = &graph::BoolGridEdges::new(&mut solver, (rows - 1, cols - 1));
     let is_passed = &solver.bool_var_2d((rows, cols));
     let is_cross = &solver.bool_var_2d((rows, cols));
-    let line_dir = if use_direction {
-        Some(graph::BoolGridEdges::new(&mut solver, (rows - 1, cols - 1)))
-    } else {
-        None
-    };
+    let line_dir = Some(graph::BoolGridEdges::new(&mut solver, (rows - 1, cols - 1)));
     let max_rank = (rows * cols * 2) as i32;
-    let rank = if has_order {
-        Some(solver.int_var_2d((rows, cols), 0, max_rank))
-    } else {
-        None
-    };
-    let rank_cross_h = if has_order {
-        Some(solver.int_var_2d((rows, cols), 0, max_rank))
-    } else {
-        None
-    };
-    let rank_cross_v = if has_order {
-        Some(solver.int_var_2d((rows, cols), 0, max_rank))
-    } else {
-        None
-    };
+    let rank = Some(solver.int_var_2d((rows, cols), 0, max_rank));
+    let rank_cross_h = Some(solver.int_var_2d((rows, cols), 0, max_rank));
+    let rank_cross_v = Some(solver.int_var_2d((rows, cols), 0, max_rank));
     let divide_type = if has_divide {
         Some(solver.int_var_2d((rows + 1, cols + 1), 0, 3))
     } else {
@@ -710,21 +710,8 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
     solver.add_answer_key_bool(&is_line.horizontal);
     solver.add_answer_key_bool(&is_line.vertical);
 
-    let aug_line = &graph::BoolGridEdges::new(&mut solver, (rows + 1, cols + 1));
-    let aug_passed_simple = if has_crossing_capable {
-        None
-    } else {
-        Some(graph::single_cycle_grid_edges(&mut solver, aug_line))
-    };
-    let aug_crossable = if has_crossing_capable {
-        Some(graph::crossable_single_cycle_grid_edges(&mut solver, aug_line))
-    } else {
-        None
-    };
-
     for y in 0..rows {
         for x in 0..(cols - 1) {
-            solver.add_expr(is_line.horizontal.at((y, x)).iff(aug_line.horizontal.at((y + 1, x + 1))));
             match problem.forced_h[y][x] {
                 1 => solver.add_expr(is_line.horizontal.at((y, x))),
                 0 => solver.add_expr(!is_line.horizontal.at((y, x))),
@@ -734,7 +721,6 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
     }
     for y in 0..(rows - 1) {
         for x in 0..cols {
-            solver.add_expr(is_line.vertical.at((y, x)).iff(aug_line.vertical.at((y + 1, x + 1))));
             match problem.forced_v[y][x] {
                 1 => solver.add_expr(is_line.vertical.at((y, x))),
                 0 => solver.add_expr(!is_line.vertical.at((y, x))),
@@ -742,84 +728,11 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
             }
         }
     }
-    for y in 0..rows {
-        for x in 0..cols {
-            let (ay, ax) = actual_cell_to_aug(y, x);
-            if let Some(aug_passed) = &aug_passed_simple {
-                solver.add_expr(is_passed.at((y, x)).iff(aug_passed.at((ay, ax))));
-                solver.add_expr(!is_cross.at((y, x)));
-            } else if let Some((aug_passed, aug_cross)) = &aug_crossable {
-                solver.add_expr(is_passed.at((y, x)).iff(aug_passed.at((ay, ax))));
-                solver.add_expr(is_cross.at((y, x)).iff(aug_cross.at((ay, ax))));
-            }
-        }
-    }
 
-    let start_outer = outer_vertex(start_y, start_x, problem.start_side);
-    let goal_outer = outer_vertex(goal_y, goal_x, problem.goal_side);
-    let start_connector = connector_edge(start_y, start_x, problem.start_side);
-    let goal_connector = connector_edge(goal_y, goal_x, problem.goal_side);
-    let perimeter = perimeter_vertices(rows + 2, cols + 2);
-    let start_pos = perimeter
-        .iter()
-        .position(|&v| v == start_outer)
-        .ok_or("travelline start side invalid")?;
-    let goal_pos = perimeter
-        .iter()
-        .position(|&v| v == goal_outer)
-        .ok_or("travelline goal side invalid")?;
-    let mut forced_ring_edges = vec![];
-    let mut i = start_pos;
-    while i != goal_pos {
-        let j = (i + 1) % perimeter.len();
-        forced_ring_edges.push(edge_between(perimeter[i], perimeter[j]));
-        i = j;
-    }
-
-    for x in 0..(cols + 1) {
-        let edge = AugEdge::Horizontal(0, x);
-        let on_path = forced_ring_edges.contains(&edge);
-        solver.add_expr(if on_path { aug_line.horizontal.at((0, x)).expr() } else { !aug_line.horizontal.at((0, x)).expr() });
-        let edge2 = AugEdge::Horizontal(rows + 1, x);
-        let on_path2 = forced_ring_edges.contains(&edge2);
-        solver.add_expr(if on_path2 { aug_line.horizontal.at((rows + 1, x)).expr() } else { !aug_line.horizontal.at((rows + 1, x)).expr() });
-    }
-    for y in 0..(rows + 1) {
-        let edge = AugEdge::Vertical(y, 0);
-        let on_path = forced_ring_edges.contains(&edge);
-        solver.add_expr(if on_path { aug_line.vertical.at((y, 0)).expr() } else { !aug_line.vertical.at((y, 0)).expr() });
-        let edge2 = AugEdge::Vertical(y, cols + 1);
-        let on_path2 = forced_ring_edges.contains(&edge2);
-        solver.add_expr(if on_path2 { aug_line.vertical.at((y, cols + 1)).expr() } else { !aug_line.vertical.at((y, cols + 1)).expr() });
-    }
-
-    for x in 0..cols {
-        let edge = AugEdge::Vertical(0, x + 1);
-        solver.add_expr(if edge == start_connector || edge == goal_connector {
-            aug_line.vertical.at((0, x + 1)).expr()
-        } else {
-            !aug_line.vertical.at((0, x + 1)).expr()
-        });
-        let edge2 = AugEdge::Vertical(rows, x + 1);
-        solver.add_expr(if edge2 == start_connector || edge2 == goal_connector {
-            aug_line.vertical.at((rows, x + 1)).expr()
-        } else {
-            !aug_line.vertical.at((rows, x + 1)).expr()
-        });
-    }
-    for y in 0..rows {
-        let edge = AugEdge::Horizontal(y + 1, 0);
-        solver.add_expr(if edge == start_connector || edge == goal_connector {
-            aug_line.horizontal.at((y + 1, 0)).expr()
-        } else {
-            !aug_line.horizontal.at((y + 1, 0)).expr()
-        });
-        let edge2 = AugEdge::Horizontal(y + 1, cols);
-        solver.add_expr(if edge2 == start_connector || edge2 == goal_connector {
-            aug_line.horizontal.at((y + 1, cols)).expr()
-        } else {
-            !aug_line.horizontal.at((y + 1, cols)).expr()
-        });
+    {
+        let (edges, graph) = is_line.representation();
+        let line_graph = graph.line_graph();
+        graph::active_vertices_connected(&mut solver, &edges, &line_graph);
     }
 
     for y in 0..rows {
@@ -834,8 +747,8 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 Side::Up,
                 problem.start,
                 problem.goal,
-                problem.start_side,
-                problem.goal_side,
+                problem.start_outer_side,
+                problem.goal_outer_side,
             );
             let down = side_expr(
                 is_line,
@@ -846,8 +759,8 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 Side::Down,
                 problem.start,
                 problem.goal,
-                problem.start_side,
-                problem.goal_side,
+                problem.start_outer_side,
+                problem.goal_outer_side,
             );
             let left = side_expr(
                 is_line,
@@ -858,8 +771,8 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 Side::Left,
                 problem.start,
                 problem.goal,
-                problem.start_side,
-                problem.goal_side,
+                problem.start_outer_side,
+                problem.goal_outer_side,
             );
             let right = side_expr(
                 is_line,
@@ -870,8 +783,8 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 Side::Right,
                 problem.start,
                 problem.goal,
-                problem.start_side,
-                problem.goal_side,
+                problem.start_outer_side,
+                problem.goal_outer_side,
             );
             let degree = count_true(vec![up.clone(), down.clone(), left.clone(), right.clone()]);
             let passed = is_passed.at((y, x));
@@ -959,50 +872,89 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 }
             }
 
-            if problem.bars[y][x] {
+            if problem.bars[y][x] && idx != problem.start && idx != problem.goal {
                 solver.add_expr(!passed);
                 solver.add_expr(!is_cross.at((y, x)));
                 solver.add_expr(degree.eq(0));
-                if line_dir.is_some() {
-                    solver.add_expr(count_true(inbound).eq(0));
-                    solver.add_expr(count_true(outbound).eq(0));
-                }
+                solver.add_expr(count_true(inbound).eq(0));
+                solver.add_expr(count_true(outbound).eq(0));
                 continue;
             }
 
-            let is_yajilin_clue = is_yajilin_clue_cell(problem, y, x);
+            let is_yajilin_clue = matches!(
+                problem.directed[y][x],
+                Some(DirectedClue { kind: 14, .. })
+            );
 
             if is_yajilin_clue {
                 solver.add_expr(!passed.expr());
                 solver.add_expr(!is_cross.at((y, x)));
                 solver.add_expr(degree.eq(0));
-                if line_dir.is_some() {
-                    solver.add_expr(count_true(inbound).eq(0));
-                    solver.add_expr(count_true(outbound).eq(0));
-                }
+                solver.add_expr(count_true(inbound).eq(0));
+                solver.add_expr(count_true(outbound).eq(0));
             } else {
                 if idx == problem.start || idx == problem.goal {
-                    solver.add_expr(degree.eq(passed.ite(2, 0)));
+                    let endpoint_degree = if endpoint_has_outer_connector(problem, idx) {
+                        2
+                    } else {
+                        1
+                    };
+                    solver.add_expr(degree.eq(passed.ite(endpoint_degree, 0)));
                 } else {
                     solver.add_expr(degree.eq(is_cross.at((y, x)).ite(4, passed.ite(2, 0))));
                 }
-                if line_dir.is_some() {
-                    if idx == problem.start {
-                        solver.add_expr(count_true(inbound).eq(0));
-                        solver.add_expr(count_true(outbound).eq(passed.ite(1, 0)));
-                        if let Some(rank) = &rank {
-                            solver.add_expr(rank.at((y, x)).eq(0));
+                if idx == problem.start {
+                    solver.add_expr(count_true(inbound).eq(0));
+                    solver.add_expr(count_true(outbound).eq(passed.ite(1, 0)));
+                    if let Some(rank) = &rank {
+                        solver.add_expr(rank.at((y, x)).eq(0));
+                    }
+                } else if idx == problem.goal {
+                    solver.add_expr(count_true(inbound).eq(passed.ite(1, 0)));
+                    solver.add_expr(count_true(outbound).eq(0));
+                } else {
+                    solver.add_expr(
+                        count_true(inbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
+                    );
+                    solver.add_expr(
+                        count_true(outbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
+                    );
+                }
+
+                if problem.bars[y][x] {
+                    if let Some(allowed_side) = endpoint_allowed_inner_side(problem, idx) {
+                        let mut has_allowed_edge = false;
+                        if y > 0 {
+                            if allowed_side == Side::Up {
+                                has_allowed_edge = true;
+                            } else {
+                                solver.add_expr(!is_line.vertical.at((y - 1, x)));
+                            }
                         }
-                    } else if idx == problem.goal {
-                        solver.add_expr(count_true(inbound).eq(passed.ite(1, 0)));
-                        solver.add_expr(count_true(outbound).eq(0));
-                    } else {
-                        solver.add_expr(
-                            count_true(inbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
-                        );
-                        solver.add_expr(
-                            count_true(outbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
-                        );
+                        if y + 1 < rows {
+                            if allowed_side == Side::Down {
+                                has_allowed_edge = true;
+                            } else {
+                                solver.add_expr(!is_line.vertical.at((y, x)));
+                            }
+                        }
+                        if x > 0 {
+                            if allowed_side == Side::Left {
+                                has_allowed_edge = true;
+                            } else {
+                                solver.add_expr(!is_line.horizontal.at((y, x - 1)));
+                            }
+                        }
+                        if x + 1 < cols {
+                            if allowed_side == Side::Right {
+                                has_allowed_edge = true;
+                            } else {
+                                solver.add_expr(!is_line.horizontal.at((y, x)));
+                            }
+                        }
+                        if !has_allowed_edge {
+                            return Err("travelline endpoint bar direction invalid");
+                        }
                     }
                 }
             }
@@ -1039,7 +991,7 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
             if let Some(clue) = problem.directed[y][x] {
                 let mut ray = vec![];
                 for (yy, xx) in directional_cells(y, x, rows, cols, clue.side) {
-                    if !problem.bars[yy][xx] && !is_yajilin_clue_cell(problem, yy, xx) {
+                    if !problem.bars[yy][xx] {
                         ray.push(!is_passed.at((yy, xx)).expr());
                     }
                 }
@@ -1084,19 +1036,19 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                         if let Some((ny, nx)) = neighbor_cell(y, x, rows, cols, Side::Up) {
                             let nup = side_expr(
                                 is_line, ny, nx, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let ndown = side_expr(
                                 is_line, ny, nx, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nleft = side_expr(
                                 is_line, ny, nx, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nright = side_expr(
                                 is_line, ny, nx, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             cands.push(vertical.clone() & (is_passed.at((ny, nx)).expr() & !(nup & ndown) & !(nleft & nright)));
                         }
@@ -1105,19 +1057,19 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                         if let Some((ny2, nx2)) = neighbor_cell(y, x, rows, cols, Side::Down) {
                             let nup2 = side_expr(
                                 is_line, ny2, nx2, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let ndown2 = side_expr(
                                 is_line, ny2, nx2, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nleft2 = side_expr(
                                 is_line, ny2, nx2, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nright2 = side_expr(
                                 is_line, ny2, nx2, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             cands.push(vertical.clone() & (is_passed.at((ny2, nx2)).expr() & !(nup2 & ndown2) & !(nleft2 & nright2)));
                         }
@@ -1126,19 +1078,19 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                         if let Some((ny3, nx3)) = neighbor_cell(y, x, rows, cols, Side::Left) {
                             let nup3 = side_expr(
                                 is_line, ny3, nx3, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let ndown3 = side_expr(
                                 is_line, ny3, nx3, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nleft3 = side_expr(
                                 is_line, ny3, nx3, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nright3 = side_expr(
                                 is_line, ny3, nx3, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             cands.push(horizontal.clone() & (is_passed.at((ny3, nx3)).expr() & !(nup3 & ndown3) & !(nleft3 & nright3)));
                         }
@@ -1147,19 +1099,19 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                         if let Some((ny4, nx4)) = neighbor_cell(y, x, rows, cols, Side::Right) {
                             let nup4 = side_expr(
                                 is_line, ny4, nx4, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let ndown4 = side_expr(
                                 is_line, ny4, nx4, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nleft4 = side_expr(
                                 is_line, ny4, nx4, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             let nright4 = side_expr(
                                 is_line, ny4, nx4, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_side, problem.goal_side
+                                problem.start_outer_side, problem.goal_outer_side
                             );
                             cands.push(horizontal.clone() & (is_passed.at((ny4, nx4)).expr() & !(nup4 & ndown4) & !(nleft4 & nright4)));
                         }
@@ -1524,7 +1476,7 @@ mod tests {
     }
 
     #[test]
-    fn test_travelline_backend_ignores_yajilin_cells_in_yajilin_ray_count() {
+    fn test_travelline_backend_counts_other_yajilin_cells_and_skips_bars_in_ray_count() {
         let payload = r#"{
             "rows": 2,
             "cols": 4,
@@ -1532,7 +1484,7 @@ mod tests {
             "goal": 7,
             "startSide": "left",
             "goalSide": "right",
-            "bars": [[false,false,false,false],[false,false,false,false]],
+            "bars": [[false,true,false,false],[false,false,false,false]],
             "ice": [[false,false,false,false],[false,false,false,false]],
             "cwfloor": [[false,false,false,false],[false,false,false,false]],
             "noadj": [[false,false,false,false],[false,false,false,false]],
@@ -1555,7 +1507,7 @@ mod tests {
         let board = solve(&problem);
         assert!(
             board.is_ok(),
-            "yajilin clue cells in a ray should be ignored when counting unvisited cells"
+            "bar cells should be skipped while other yajilin clue cells are still counted"
         );
     }
 
@@ -1588,6 +1540,118 @@ mod tests {
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
         assert!(board.is_ok(), "simple clockwise-count clue should solve in backend");
+    }
+
+    #[test]
+    fn test_travelline_backend_allows_start_or_goal_on_bar_cells() {
+        let payload = r#"{
+            "rows": 1,
+            "cols": 2,
+            "start": 0,
+            "goal": 1,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[true,false]],
+            "ice": [[false,false]],
+            "cwfloor": [[false,false]],
+            "noadj": [[false,false]],
+            "notouch": [[false,false]],
+            "sloop": [[false,false]],
+            "specials": [[-1,-1]],
+            "order": [[-1,-1]],
+            "divide": [[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false]],
+            "countryV": [],
+            "directed": [[null,null]],
+            "requiredH": [[true]],
+            "requiredV": []
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_ok(),
+            "a bar cell used as the start or goal endpoint should remain solvable"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_supports_internal_bar_endpoints() {
+        let payload = r#"{
+            "rows": 1,
+            "cols": 2,
+            "start": 0,
+            "goal": 1,
+            "startSide": null,
+            "goalSide": null,
+            "startOuterSide": null,
+            "goalOuterSide": null,
+            "startDir": "right",
+            "goalDir": "right",
+            "bars": [[true,true]],
+            "ice": [[false,false]],
+            "cwfloor": [[false,false]],
+            "noadj": [[false,false]],
+            "notouch": [[false,false]],
+            "sloop": [[false,false]],
+            "specials": [[-1,-1]],
+            "order": [[-1,-1]],
+            "divide": [[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false]],
+            "countryV": [],
+            "directed": [[null,null]],
+            "requiredH": [[true]],
+            "requiredV": []
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_ok(),
+            "internal bar endpoints with matching directions should be solvable in backend"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_rejects_wrong_internal_edge_for_bar_endpoint() {
+        let payload = r#"{
+            "rows": 2,
+            "cols": 2,
+            "start": 0,
+            "goal": 2,
+            "startSide": null,
+            "goalSide": "down",
+            "startOuterSide": null,
+            "goalOuterSide": "down",
+            "startDir": "right",
+            "goalDir": null,
+            "bars": [[true,false],[false,false]],
+            "ice": [[false,false],[false,false]],
+            "cwfloor": [[false,false],[false,false]],
+            "noadj": [[false,false],[false,false]],
+            "notouch": [[false,false],[false,false]],
+            "sloop": [[false,false],[false,false]],
+            "specials": [[-1,-1],[-1,-1]],
+            "order": [[-1,-1],[-1,-1]],
+            "divide": [[0,0,0],[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false],[false]],
+            "countryV": [[false,false]],
+            "directed": [[null,null],[null,null]],
+            "requiredH": [[false],[false]],
+            "requiredV": [[true,false]],
+            "forcedH": [[0],[ -1 ]],
+            "forcedV": [[1,-1]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(
+            board.is_err(),
+            "a bar endpoint should not be allowed to use an internal edge that disagrees with its arrow direction"
+        );
     }
 
     #[test]
