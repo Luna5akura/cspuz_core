@@ -1,4 +1,4 @@
-use crate::board::{Board, BoardKind};
+use crate::board::{Board, BoardKind, Item, ItemKind};
 use crate::uniqueness::is_unique;
 use cspuz_rs::graph;
 use cspuz_rs::solver::{count_true, Solver, TRUE};
@@ -1151,9 +1151,17 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
         .irrefutable_facts()
         .ok_or("travelline backend found no solution")?;
     let line_facts = facts.get(is_line);
+    let passed_facts = facts.get(is_passed);
 
     let mut board = Board::new(BoardKind::Grid, rows, cols, is_unique(&line_facts));
     board.add_lines_irrefutable_facts(&line_facts, "green", None);
+    for y in 0..rows {
+        for x in 0..cols {
+            if matches!(passed_facts[y][x], Some(false)) && !problem.bars[y][x] {
+                board.push(Item::cell(y, x, "green", ItemKind::Cross));
+            }
+        }
+    }
     Ok(board)
 }
 
