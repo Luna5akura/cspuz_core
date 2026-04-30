@@ -39,6 +39,8 @@ pub struct TravelLineProblem {
     slither: Vec<Vec<i32>>,
     country_h: Vec<Vec<bool>>,
     country_v: Vec<Vec<bool>>,
+    border_h: Vec<Vec<bool>>,
+    border_v: Vec<Vec<bool>>,
     directed: Vec<Vec<Option<DirectedClue>>>,
     required_h: Vec<Vec<bool>>,
     required_v: Vec<Vec<bool>>,
@@ -82,6 +84,17 @@ fn parse_bool_grid(
         }
     }
     Ok(ret)
+}
+
+fn parse_optional_bool_grid(
+    src: &json::JsonValue,
+    rows: usize,
+    cols: usize,
+) -> Result<Vec<Vec<bool>>, &'static str> {
+    if src.is_null() {
+        return Ok(vec![vec![false; cols]; rows]);
+    }
+    parse_bool_grid(src, rows, cols)
 }
 
 fn parse_directed_grid(
@@ -267,6 +280,8 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
         },
         country_h: parse_bool_grid(&root["countryH"], rows, cols.saturating_sub(1))?,
         country_v: parse_bool_grid(&root["countryV"], rows.saturating_sub(1), cols)?,
+        border_h: parse_optional_bool_grid(&root["borderH"], rows, cols.saturating_sub(1))?,
+        border_v: parse_optional_bool_grid(&root["borderV"], rows.saturating_sub(1), cols)?,
         directed: parse_directed_grid(&root["directed"], rows, cols)?,
         required_h: parse_bool_grid(&root["requiredH"], rows, cols.saturating_sub(1))?,
         required_v: parse_bool_grid(&root["requiredV"], rows.saturating_sub(1), cols)?,
@@ -1054,6 +1069,9 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
 
     for y in 0..rows {
         for x in 0..(cols - 1) {
+            if problem.border_h[y][x] {
+                solver.add_expr(!is_line.horizontal.at((y, x)));
+            }
             if problem.required_h[y][x] {
                 solver.add_expr(is_line.horizontal.at((y, x)));
             }
@@ -1061,6 +1079,9 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
     }
     for y in 0..(rows - 1) {
         for x in 0..cols {
+            if problem.border_v[y][x] {
+                solver.add_expr(!is_line.vertical.at((y, x)));
+            }
             if problem.required_v[y][x] {
                 solver.add_expr(is_line.vertical.at((y, x)));
             }
@@ -1327,6 +1348,39 @@ mod tests {
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
         assert!(board.is_ok(), "simple required-line puzzle should solve in backend");
+    }
+
+    #[test]
+    fn test_travelline_backend_respects_blocked_border_edges() {
+        let payload = r#"{
+            "rows": 1,
+            "cols": 2,
+            "start": 0,
+            "goal": 1,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[false,false]],
+            "ice": [[false,false]],
+            "cwfloor": [[false,false]],
+            "noadj": [[false,false]],
+            "notouch": [[false,false]],
+            "sloop": [[false,false]],
+            "specials": [[-1,-1]],
+            "order": [[-1,-1]],
+            "divide": [[0,0,0],[0,0,0]],
+            "slither": [[-1,-1,-1],[-1,-1,-1]],
+            "countryH": [[false]],
+            "countryV": [],
+            "borderH": [[true]],
+            "borderV": [],
+            "directed": [[null,null]],
+            "requiredH": [[false]],
+            "requiredV": []
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem);
+        assert!(board.is_err(), "blocked border should forbid the only connecting edge");
     }
 
     #[test]
