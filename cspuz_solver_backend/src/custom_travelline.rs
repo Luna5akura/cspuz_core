@@ -340,6 +340,17 @@ fn endpoint_has_outer_connector(problem: &TravelLineProblem, idx: usize) -> bool
     endpoint_outer_side(problem, idx).is_some()
 }
 
+fn outer_boundary_segment_has_line(
+    problem: &TravelLineProblem,
+    cell_y: usize,
+    cell_x: usize,
+    side: Side,
+) -> bool {
+    let idx = cell_y * problem.cols + cell_x;
+    (idx == problem.start && problem.start_outer_side == Some(side))
+        || (idx == problem.goal && problem.goal_outer_side == Some(side))
+}
+
 fn endpoint_allowed_inner_side(problem: &TravelLineProblem, idx: usize) -> Option<Side> {
     if idx == problem.start {
         problem.start_dir
@@ -1151,6 +1162,28 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
     if let Some(divide_type) = &divide_type {
         for y in 0..=rows {
             for x in 0..=cols {
+                if y < rows
+                    && x > 0
+                    && x < cols
+                    && problem.divide[y][x] > 0
+                    && problem.divide[y + 1][x] > 0
+                    && problem.divide[y][x] != problem.divide[y + 1][x]
+                    && !problem.border_h[y][x - 1]
+                    && !problem.country_h[y][x - 1]
+                {
+                    solver.add_expr(is_line.horizontal.at((y, x - 1)));
+                }
+                if x < cols
+                    && y > 0
+                    && y < rows
+                    && problem.divide[y][x] > 0
+                    && problem.divide[y][x + 1] > 0
+                    && problem.divide[y][x] != problem.divide[y][x + 1]
+                    && !problem.border_v[y - 1][x]
+                    && !problem.country_v[y - 1][x]
+                {
+                    solver.add_expr(is_line.vertical.at((y - 1, x)));
+                }
                 let clue = problem.divide[y][x];
                 if clue > 0 {
                     for t in 0..3 {
@@ -1168,34 +1201,56 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 }
                 if y < rows {
                     if x == 0 || x == cols {
-                        for divide_mask in divide_type.iter().take(3) {
-                            solver.add_expr(
-                                divide_mask.at((y, x)).iff(divide_mask.at((y + 1, x))),
-                            );
+                        let boundary_has_line = if x == 0 {
+                            outer_boundary_segment_has_line(problem, y, 0, Side::Left)
+                        } else {
+                            outer_boundary_segment_has_line(problem, y, cols - 1, Side::Right)
+                        };
+                        if !boundary_has_line {
+                            for divide_mask in divide_type.iter().take(3) {
+                                solver.add_expr(
+                                    divide_mask.at((y, x)).iff(divide_mask.at((y + 1, x))),
+                                );
+                            }
                         }
                     } else if !problem.border_h[y][x - 1] && !problem.country_h[y][x - 1] {
                         for divide_mask in divide_type.iter().take(3) {
                             solver.add_expr(
-                                (!is_line.horizontal.at((y, x - 1))).imp(
-                                    divide_mask.at((y, x)).iff(divide_mask.at((y + 1, x))),
-                                ),
+                                (!is_line.horizontal.at((y, x - 1)) & divide_mask.at((y, x)))
+                                    .imp(divide_mask.at((y + 1, x))),
+                            );
+                            solver.add_expr(
+                                (!is_line.horizontal.at((y, x - 1))
+                                    & divide_mask.at((y + 1, x)))
+                                    .imp(divide_mask.at((y, x))),
                             );
                         }
                     }
                 }
                 if x < cols {
                     if y == 0 || y == rows {
-                        for divide_mask in divide_type.iter().take(3) {
-                            solver.add_expr(
-                                divide_mask.at((y, x)).iff(divide_mask.at((y, x + 1))),
-                            );
+                        let boundary_has_line = if y == 0 {
+                            outer_boundary_segment_has_line(problem, 0, x, Side::Up)
+                        } else {
+                            outer_boundary_segment_has_line(problem, rows - 1, x, Side::Down)
+                        };
+                        if !boundary_has_line {
+                            for divide_mask in divide_type.iter().take(3) {
+                                solver.add_expr(
+                                    divide_mask.at((y, x)).iff(divide_mask.at((y, x + 1))),
+                                );
+                            }
                         }
                     } else if !problem.border_v[y - 1][x] && !problem.country_v[y - 1][x] {
                         for divide_mask in divide_type.iter().take(3) {
                             solver.add_expr(
-                                (!is_line.vertical.at((y - 1, x))).imp(
-                                    divide_mask.at((y, x)).iff(divide_mask.at((y, x + 1))),
-                                ),
+                                (!is_line.vertical.at((y - 1, x)) & divide_mask.at((y, x)))
+                                    .imp(divide_mask.at((y, x + 1))),
+                            );
+                            solver.add_expr(
+                                (!is_line.vertical.at((y - 1, x))
+                                    & divide_mask.at((y, x + 1)))
+                                    .imp(divide_mask.at((y, x))),
                             );
                         }
                     }
@@ -1530,6 +1585,84 @@ mod tests {
         assert!(
             board.is_err(),
             "adjacent divide clues of different types should force the separating edge between them"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_marks_adjacent_divide_separator_in_output() {
+        let payload = r#"{
+            "rows": 4,
+            "cols": 4,
+            "start": 0,
+            "goal": 2,
+            "startSide": "up",
+            "goalSide": "up",
+            "bars": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "ice": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "cwfloor": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "noadj": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "notouch": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "sloop": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "specials": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0],[0,0,0,0,0],[0,1,2,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "countryV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "borderH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "borderV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "directed": [[null,null,null,null],[null,null,null,null],[null,null,null,null],[null,null,null,null]],
+            "requiredH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "requiredV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "forcedH": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "forcedV": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem).expect("payload should remain solvable");
+        let json = board.to_json();
+        assert!(
+            json.contains("\"y\":4,\"x\":3,\"color\":\"green\",\"item\":\"line\""),
+            "backend should mark the edge between adjacent divide clues as a forced line: {json}"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_solves_left_right_adjacent_divide_example() {
+        let payload = r#"{
+            "rows": 4,
+            "cols": 4,
+            "start": 8,
+            "goal": 11,
+            "startSide": "left",
+            "goalSide": "right",
+            "bars": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "ice": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "cwfloor": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "noadj": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "notouch": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "sloop": [[false,false,false,false],[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "specials": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "order": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]],
+            "divide": [[0,0,0,0,0],[0,0,0,0,0],[0,1,2,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+            "slither": [[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1],[-1,-1,-1,-1,-1]],
+            "countryH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "countryV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "borderH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "borderV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "directed": [[null,null,null,null],[null,null,null,null],[null,null,null,null],[null,null,null,null]],
+            "requiredH": [[false,false,false],[false,false,false],[false,false,false],[false,false,false]],
+            "requiredV": [[false,false,false,false],[false,false,false,false],[false,false,false,false]],
+            "forcedH": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+            "forcedV": [[-1,-1,-1,-1],[-1,-1,-1,-1],[-1,-1,-1,-1]]
+        }"#;
+
+        let problem = deserialize_problem(payload).expect("payload should deserialize");
+        let board = solve(&problem).expect("left/right divide example should remain solvable");
+        let json = board.to_json();
+        assert!(
+            json.contains("\"y\":4,\"x\":3,\"color\":\"green\",\"item\":\"line\""),
+            "backend should force the separator line in the left/right example: {json}"
         );
     }
 
