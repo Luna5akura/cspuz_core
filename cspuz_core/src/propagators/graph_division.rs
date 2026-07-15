@@ -177,6 +177,7 @@ pub struct GraphDivision {
 
     propagations: Vec<Lit>,
     propagation_reasons: Vec<Reason>, // the reason why unique_lits[i] is propagated
+    already_notified: Vec<bool>,      // whether unique_lits[i] is already notified to the solver
 
     /// The reason why the current state is inconsistent.
     /// Since this reason will be immediately used to calculate the reason of the next propagation,
@@ -292,6 +293,7 @@ impl GraphDivision {
             unique_lits,
             propagations: vec![],
             propagation_reasons: vec![Reason::NotPropagated; num_unique_lits],
+            already_notified: vec![false; num_unique_lits],
             inconsistency_reason: vec![],
             propagation_failure_lit: None,
             undo_stack: vec![],
@@ -302,7 +304,14 @@ impl GraphDivision {
     fn notify(&mut self, lit: Lit) {
         self.undo_stack.push(UndoInfo::LevelBoundary);
 
-        let mut idx = self.literals.binary_search_by_key(&lit, |x| x.0).unwrap();
+        {
+            let idx = self.unique_lits.binary_search(&lit).unwrap();
+            assert!(!self.already_notified[idx]);
+            self.already_notified[idx] = true;
+        }
+
+        // NOTE: binary_search_by_key cannot be used here because the literals are not unique in `self.literals`.
+        let mut idx = self.literals.partition_point(|x| x.0 < lit);
         while idx < self.literals.len() && self.literals[idx].0 == lit {
             match self.literals[idx].1 {
                 LiteralInfo::Edge(edge_idx, s) => {
@@ -338,7 +347,10 @@ impl GraphDivision {
         }
     }
 
-    fn undo_internal(&mut self) {
+    fn undo_internal(&mut self, p: Lit) {
+        let idx = self.unique_lits.binary_search(&p).unwrap();
+        self.already_notified[idx] = false;
+
         while let Some(info) = self.undo_stack.pop() {
             match info {
                 UndoInfo::LevelBoundary => {
@@ -363,6 +375,9 @@ impl GraphDivision {
         self.propagations.push(lit);
 
         let lit_id = self.unique_lits.binary_search(&lit).unwrap();
+        if self.already_notified[lit_id] {
+            return;
+        }
         self.propagation_reasons[lit_id] = reason;
     }
 
@@ -911,6 +926,86 @@ impl GraphDivision {
         }
         ret
     }
+
+    fn get_reason_lits(&self, reason: &Reason) -> Vec<Lit> {
+        match reason {
+            &Reason::NotPropagated => panic!(),
+            &Reason::EdgeInSameGroup { edge_idx } => {
+                let (u, v) = self.edges[edge_idx];
+                self.reason_connected_path(u, v)
+            }
+            &Reason::EdgeBetweenDifferentGroups {
+                disconnected_edge_idx,
+                newly_decided_edge_idx,
+                flip,
+            } => {
+                let (u1, v1) = self.edges[disconnected_edge_idx];
+                let (u2, v2) = self.edges[newly_decided_edge_idx];
+                let (u2, v2) = if flip { (v2, u2) } else { (u2, v2) };
+
+                let mut ret = self.reason_connected_path(u1, u2);
+                let path = self.reason_connected_path(v1, v2);
+                ret.extend(path);
+                ret.push(self.edge_lits[disconnected_edge_idx]);
+
+                ret
+            }
+            &Reason::TooLargeIfRegionsAreMerged {
+                disconnected_edge_idx,
+                upper_bound_lit,
+            } => {
+                let (u, v) = self.edges[disconnected_edge_idx];
+                let mut ret = self.reason_decided_region(u);
+                ret.extend(self.reason_decided_region(v));
+                ret.extend(upper_bound_lit);
+                ret
+            }
+            &Reason::RegionAlreadyLarge { vertex_idx } => self.reason_decided_region(vertex_idx),
+            &Reason::RegionAlreadySmall { vertex_idx } => self.reason_potential_region(vertex_idx),
+            &Reason::InconsistentBoundsIfRegionsAreMerged {
+                disconnected_edge_idx,
+                upper_bound_vertex_idx,
+                lower_bound_vertex_idx,
+                flip,
+            } => {
+                let (u1, v1) = self.edges[disconnected_edge_idx];
+                let (u1, v1) = if flip { (v1, u1) } else { (u1, v1) };
+
+                let mut ret = self.reason_connected_path(u1, upper_bound_vertex_idx);
+                ret.extend(self.reason_connected_path(v1, lower_bound_vertex_idx));
+                ret.extend(self.upper_bound_lit[upper_bound_vertex_idx]);
+                ret.extend(self.lower_bound_lit[lower_bound_vertex_idx]);
+                ret
+            }
+            &Reason::BoundPropagationWithinRegion {
+                known_bound_lit,
+                known_bound_idx,
+                unknown_bound_idx,
+            } => {
+                let mut ret = self.reason_connected_path(known_bound_idx, unknown_bound_idx);
+                ret.extend(known_bound_lit);
+                ret
+            }
+            &Reason::AdjacentSameSizeRegions {
+                region1_vertex,
+                region1_lower_bound,
+                region1_upper_bound,
+                region2_vertex,
+                region2_lower_bound,
+                region2_upper_bound,
+                region3_vertex,
+            } => {
+                let mut ret = self.reason_decided_region(region1_vertex);
+                ret.extend(self.reason_decided_region(region2_vertex));
+                ret.extend(self.reason_decided_region(region3_vertex));
+                ret.extend(region1_lower_bound);
+                ret.extend(region1_upper_bound);
+                ret.extend(region2_lower_bound);
+                ret.extend(region2_upper_bound);
+                ret
+            }
+        }
+    }
 }
 
 unsafe impl<T: SolverManipulator> CustomPropagator<T> for GraphDivision {
@@ -921,12 +1016,19 @@ unsafe impl<T: SolverManipulator> CustomPropagator<T> for GraphDivision {
             }
         }
 
-        let unique_lits = self.unique_lits.clone();
-        for p in unique_lits {
-            if unsafe { solver.value(p) } == Some(true) {
-                if !self.propagate(solver, p, 0) {
-                    return false;
-                }
+        // We call `propagate` only for the literals that are already decided to be true at this moment.
+        // To avoid calling `propagate` for literals which are decided during the propagation of this constraint,
+        // we first collect the literals to be propagated in `propagate_lits`.
+        let mut propagate_lits = vec![];
+        for &lit in &self.unique_lits {
+            if unsafe { solver.value(lit) } == Some(true) {
+                propagate_lits.push(lit);
+            }
+        }
+
+        for p in propagate_lits {
+            if !self.propagate(solver, p, 0) {
+                return false;
             }
         }
 
@@ -953,10 +1055,49 @@ unsafe impl<T: SolverManipulator> CustomPropagator<T> for GraphDivision {
             return false;
         }
 
-        for p in &self.propagations {
-            if unsafe { solver.value(*p) } == Some(false) {
-                self.propagation_failure_lit = Some(*p);
+        self.propagations.sort();
+        self.propagations.dedup();
+
+        for &p in &self.propagations {
+            if unsafe { solver.value(p) } == Some(false) {
+                // This can happen during initialization or when !p has been
+                // decided by another constraint. Build the reason directly:
+                // the literals that forced this propagation plus !p.
+                let idx = self.unique_lits.binary_search(&p).unwrap();
+                let reason = &self.propagation_reasons[idx];
+
+                let mut res = self.get_reason_lits(reason);
+                res.push(!p);
+
+                let mut cur_level = false;
+                for &lit in &res {
+                    if unsafe { solver.is_current_level(lit) } {
+                        cur_level = true;
+                        break;
+                    }
+                }
+                assert!(cur_level);
+
+                self.inconsistency_reason = res;
                 return false;
+            }
+        }
+
+        for (i, p) in self.propagations.iter().enumerate() {
+            if unsafe { solver.value(*p) } == Some(false) {
+                // This should happen only when a conflicting propagation is
+                // found during this propagation: the literal !*p is already
+                // enqueued, so propagate() will be called again with it and
+                // the inconsistency will be detected then.
+                assert!(i > 0);
+                assert!(
+                    self.propagations[i - 1] == !*p,
+                    "propagations={:?}, i={}, p={:?}",
+                    self.propagations,
+                    i,
+                    p
+                );
+                continue;
             }
 
             assert!(unsafe { solver.enqueue(*p) });
@@ -976,84 +1117,7 @@ unsafe impl<T: SolverManipulator> CustomPropagator<T> for GraphDivision {
         let idx = self.unique_lits.binary_search(&p).unwrap();
         let reason = &self.propagation_reasons[idx];
 
-        let mut res = match *reason {
-            Reason::NotPropagated => panic!(),
-            Reason::EdgeInSameGroup { edge_idx } => {
-                let (u, v) = self.edges[edge_idx];
-                self.reason_connected_path(u, v)
-            }
-            Reason::EdgeBetweenDifferentGroups {
-                disconnected_edge_idx,
-                newly_decided_edge_idx,
-                flip,
-            } => {
-                let (u1, v1) = self.edges[disconnected_edge_idx];
-                let (u2, v2) = self.edges[newly_decided_edge_idx];
-                let (u2, v2) = if flip { (v2, u2) } else { (u2, v2) };
-
-                let mut ret = self.reason_connected_path(u1, u2);
-                let path = self.reason_connected_path(v1, v2);
-                ret.extend(path);
-                ret.push(self.edge_lits[disconnected_edge_idx]);
-
-                ret
-            }
-            Reason::TooLargeIfRegionsAreMerged {
-                disconnected_edge_idx,
-                upper_bound_lit,
-            } => {
-                let (u, v) = self.edges[disconnected_edge_idx];
-                let mut ret = self.reason_decided_region(u);
-                ret.extend(self.reason_decided_region(v));
-                ret.extend(upper_bound_lit);
-                ret
-            }
-            Reason::RegionAlreadyLarge { vertex_idx } => self.reason_decided_region(vertex_idx),
-            Reason::RegionAlreadySmall { vertex_idx } => self.reason_potential_region(vertex_idx),
-            Reason::InconsistentBoundsIfRegionsAreMerged {
-                disconnected_edge_idx,
-                upper_bound_vertex_idx,
-                lower_bound_vertex_idx,
-                flip,
-            } => {
-                let (u1, v1) = self.edges[disconnected_edge_idx];
-                let (u1, v1) = if flip { (v1, u1) } else { (u1, v1) };
-
-                let mut ret = self.reason_connected_path(u1, upper_bound_vertex_idx);
-                ret.extend(self.reason_connected_path(v1, lower_bound_vertex_idx));
-                ret.extend(self.upper_bound_lit[upper_bound_vertex_idx]);
-                ret.extend(self.lower_bound_lit[lower_bound_vertex_idx]);
-                ret
-            }
-            Reason::BoundPropagationWithinRegion {
-                known_bound_lit,
-                known_bound_idx,
-                unknown_bound_idx,
-            } => {
-                let mut ret = self.reason_connected_path(known_bound_idx, unknown_bound_idx);
-                ret.extend(known_bound_lit);
-                ret
-            }
-            Reason::AdjacentSameSizeRegions {
-                region1_vertex,
-                region1_lower_bound,
-                region1_upper_bound,
-                region2_vertex,
-                region2_lower_bound,
-                region2_upper_bound,
-                region3_vertex,
-            } => {
-                let mut ret = self.reason_decided_region(region1_vertex);
-                ret.extend(self.reason_decided_region(region2_vertex));
-                ret.extend(self.reason_decided_region(region3_vertex));
-                ret.extend(region1_lower_bound);
-                ret.extend(region1_upper_bound);
-                ret.extend(region2_lower_bound);
-                ret.extend(region2_upper_bound);
-                ret
-            }
-        };
-
+        let mut res = self.get_reason_lits(reason);
         if let Some(p) = self.propagation_failure_lit {
             res.push(p);
         }
@@ -1061,8 +1125,8 @@ unsafe impl<T: SolverManipulator> CustomPropagator<T> for GraphDivision {
         res
     }
 
-    fn undo(&mut self, _solver: &mut T, _p: Lit) {
-        self.undo_internal();
+    fn undo(&mut self, _solver: &mut T, p: Lit) {
+        self.undo_internal(p);
     }
 }
 
