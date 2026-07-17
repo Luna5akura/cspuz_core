@@ -11,6 +11,8 @@ enum Side {
     Right,
 }
 
+const SIDES: [Side; 4] = [Side::Up, Side::Down, Side::Left, Side::Right];
+
 #[derive(Clone, Copy)]
 struct DirectedClue {
     kind: i32,
@@ -296,12 +298,24 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
     })
 }
 
-fn neighbor_cell(y: usize, x: usize, rows: usize, cols: usize, side: Side) -> Option<(usize, usize)> {
+fn neighbor_cell(
+    y: usize,
+    x: usize,
+    rows: usize,
+    cols: usize,
+    side: Side,
+) -> Option<(usize, usize)> {
     match side {
-        Side::Up => (y > 0).then_some((y - 1, x)),
-        Side::Down => (y + 1 < rows).then_some((y + 1, x)),
-        Side::Left => (x > 0).then_some((y, x - 1)),
-        Side::Right => (x + 1 < cols).then_some((y, x + 1)),
+        Side::Up => y.checked_sub(1).map(|ny| (ny, x)),
+        Side::Down => y
+            .checked_add(1)
+            .filter(|&ny| ny < rows)
+            .map(|ny| (ny, x)),
+        Side::Left => x.checked_sub(1).map(|nx| (y, nx)),
+        Side::Right => x
+            .checked_add(1)
+            .filter(|&nx| nx < cols)
+            .map(|nx| (y, nx)),
     }
 }
 
@@ -444,6 +458,59 @@ fn side_expr(
             }
         }
     }
+}
+
+fn problem_side_expr(
+    is_line: &graph::BoolGridEdges,
+    problem: &TravelLineProblem,
+    y: usize,
+    x: usize,
+    side: Side,
+) -> cspuz_rs::solver::BoolExpr {
+    side_expr(
+        is_line,
+        y,
+        x,
+        problem.rows,
+        problem.cols,
+        side,
+        problem.start,
+        problem.goal,
+        problem.start_outer_side,
+        problem.goal_outer_side,
+    )
+}
+
+fn cell_straight_expr(
+    is_line: &graph::BoolGridEdges,
+    problem: &TravelLineProblem,
+    y: usize,
+    x: usize,
+) -> cspuz_rs::solver::BoolExpr {
+    let up = problem_side_expr(is_line, problem, y, x, Side::Up);
+    let down = problem_side_expr(is_line, problem, y, x, Side::Down);
+    let left = problem_side_expr(is_line, problem, y, x, Side::Left);
+    let right = problem_side_expr(is_line, problem, y, x, Side::Right);
+    (up & down) | (left & right)
+}
+
+fn cell_curve_expr(
+    is_line: &graph::BoolGridEdges,
+    problem: &TravelLineProblem,
+    y: usize,
+    x: usize,
+) -> cspuz_rs::solver::BoolExpr {
+    let up = problem_side_expr(is_line, problem, y, x, Side::Up);
+    let down = problem_side_expr(is_line, problem, y, x, Side::Down);
+    let left = problem_side_expr(is_line, problem, y, x, Side::Left);
+    let right = problem_side_expr(is_line, problem, y, x, Side::Right);
+    let vertical = up.clone() & down.clone();
+    let horizontal = left.clone() & right.clone();
+    let corner = (up.clone() & left.clone())
+        | (up & right.clone())
+        | (down.clone() & left)
+        | (down & right);
+    corner & !vertical & !horizontal
 }
 
 fn directional_cells(
@@ -629,54 +696,10 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
     for y in 0..rows {
         for x in 0..cols {
             let idx = y * cols + x;
-            let up = side_expr(
-                is_line,
-                y,
-                x,
-                rows,
-                cols,
-                Side::Up,
-                problem.start,
-                problem.goal,
-                problem.start_outer_side,
-                problem.goal_outer_side,
-            );
-            let down = side_expr(
-                is_line,
-                y,
-                x,
-                rows,
-                cols,
-                Side::Down,
-                problem.start,
-                problem.goal,
-                problem.start_outer_side,
-                problem.goal_outer_side,
-            );
-            let left = side_expr(
-                is_line,
-                y,
-                x,
-                rows,
-                cols,
-                Side::Left,
-                problem.start,
-                problem.goal,
-                problem.start_outer_side,
-                problem.goal_outer_side,
-            );
-            let right = side_expr(
-                is_line,
-                y,
-                x,
-                rows,
-                cols,
-                Side::Right,
-                problem.start,
-                problem.goal,
-                problem.start_outer_side,
-                problem.goal_outer_side,
-            );
+            let up = problem_side_expr(is_line, problem, y, x, Side::Up);
+            let down = problem_side_expr(is_line, problem, y, x, Side::Down);
+            let left = problem_side_expr(is_line, problem, y, x, Side::Left);
+            let right = problem_side_expr(is_line, problem, y, x, Side::Right);
             let degree = count_true(vec![up.clone(), down.clone(), left.clone(), right.clone()]);
             let passed = is_passed.at((y, x));
             let vertical = up.clone() & down.clone();
@@ -974,88 +997,16 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                     solver.add_expr(&passed);
                     solver.add_expr(straight.clone());
                     let mut cands = vec![];
-                    if y > 0 {
-                        if let Some((ny, nx)) = neighbor_cell(y, x, rows, cols, Side::Up) {
-                            let nup = side_expr(
-                                is_line, ny, nx, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
+                    for (side, through_pearl) in [
+                        (Side::Up, vertical.clone()),
+                        (Side::Down, vertical.clone()),
+                        (Side::Left, horizontal.clone()),
+                        (Side::Right, horizontal.clone()),
+                    ] {
+                        if let Some((ny, nx)) = neighbor_cell(y, x, rows, cols, side) {
+                            cands.push(
+                                through_pearl & cell_curve_expr(is_line, problem, ny, nx),
                             );
-                            let ndown = side_expr(
-                                is_line, ny, nx, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nleft = side_expr(
-                                is_line, ny, nx, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nright = side_expr(
-                                is_line, ny, nx, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            cands.push(vertical.clone() & (is_passed.at((ny, nx)).expr() & !(nup & ndown) & !(nleft & nright)));
-                        }
-                    }
-                    if y + 1 < rows {
-                        if let Some((ny2, nx2)) = neighbor_cell(y, x, rows, cols, Side::Down) {
-                            let nup2 = side_expr(
-                                is_line, ny2, nx2, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let ndown2 = side_expr(
-                                is_line, ny2, nx2, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nleft2 = side_expr(
-                                is_line, ny2, nx2, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nright2 = side_expr(
-                                is_line, ny2, nx2, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            cands.push(vertical.clone() & (is_passed.at((ny2, nx2)).expr() & !(nup2 & ndown2) & !(nleft2 & nright2)));
-                        }
-                    }
-                    if x > 0 {
-                        if let Some((ny3, nx3)) = neighbor_cell(y, x, rows, cols, Side::Left) {
-                            let nup3 = side_expr(
-                                is_line, ny3, nx3, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let ndown3 = side_expr(
-                                is_line, ny3, nx3, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nleft3 = side_expr(
-                                is_line, ny3, nx3, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nright3 = side_expr(
-                                is_line, ny3, nx3, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            cands.push(horizontal.clone() & (is_passed.at((ny3, nx3)).expr() & !(nup3 & ndown3) & !(nleft3 & nright3)));
-                        }
-                    }
-                    if x + 1 < cols {
-                        if let Some((ny4, nx4)) = neighbor_cell(y, x, rows, cols, Side::Right) {
-                            let nup4 = side_expr(
-                                is_line, ny4, nx4, rows, cols, Side::Up, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let ndown4 = side_expr(
-                                is_line, ny4, nx4, rows, cols, Side::Down, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nleft4 = side_expr(
-                                is_line, ny4, nx4, rows, cols, Side::Left, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            let nright4 = side_expr(
-                                is_line, ny4, nx4, rows, cols, Side::Right, problem.start, problem.goal,
-                                problem.start_outer_side, problem.goal_outer_side
-                            );
-                            cands.push(horizontal.clone() & (is_passed.at((ny4, nx4)).expr() & !(nup4 & ndown4) & !(nleft4 & nright4)));
                         }
                     }
                     solver.add_expr(cspuz_rs::solver::any(cands));
@@ -1063,6 +1014,16 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 4 => {
                     solver.add_expr(&passed);
                     solver.add_expr(curve.clone());
+                    for side in SIDES {
+                        let incident = problem_side_expr(is_line, problem, y, x, side);
+                        if let Some((ny, nx)) = neighbor_cell(y, x, rows, cols, side) {
+                            solver.add_expr(
+                                incident.imp(cell_straight_expr(is_line, problem, ny, nx)),
+                            );
+                        } else {
+                            solver.add_expr(!incident);
+                        }
+                    }
                 }
                 7 => {
                     solver.add_expr(&passed);

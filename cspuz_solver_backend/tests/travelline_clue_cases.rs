@@ -26,6 +26,13 @@ fn travelline_clue_examples_from_urls_return_expected_status() {
                 Some("grid"),
                 "travelline clue case {name} from {source_url} returned an invalid board: {actual}"
             );
+            if let Some(expected_is_unique) = case["expected_is_unique"].as_bool() {
+                assert_eq!(
+                    response["description"]["isUnique"].as_bool(),
+                    Some(expected_is_unique),
+                    "travelline clue case {name} from {source_url} returned unexpected uniqueness: {actual}"
+                );
+            }
         } else if let Some(expected_description) = case["expected_description"].as_str() {
             assert_eq!(
                 response["description"].as_str(),
