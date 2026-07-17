@@ -168,14 +168,14 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
     if start >= rows * cols || goal >= rows * cols {
         return Err("travelline start/goal out of range");
     }
-    let start_outer_side = if root.has_key("startOuterSide") {
+    let mut start_outer_side = if root.has_key("startOuterSide") {
         parse_optional_side(&root["startOuterSide"]).map_err(|_| "travelline start outer side invalid")?
     } else if root["startSide"].is_null() {
         None
     } else {
         parse_optional_side(&root["startSide"]).map_err(|_| "travelline start side invalid")?
     };
-    let goal_outer_side = if root.has_key("goalOuterSide") {
+    let mut goal_outer_side = if root.has_key("goalOuterSide") {
         parse_optional_side(&root["goalOuterSide"]).map_err(|_| "travelline goal outer side invalid")?
     } else if root["goalSide"].is_null() {
         None
@@ -192,6 +192,12 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
     } else {
         None
     };
+    if start_dir.is_some() {
+        start_outer_side = None;
+    }
+    if goal_dir.is_some() {
+        goal_outer_side = None;
+    }
     if start_outer_side.is_none() && start_dir.is_none() {
         return Err("travelline start endpoint missing");
     }
@@ -740,10 +746,12 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
             }
 
             let is_blocked_bar = problem.bars[y][x] && idx != problem.start && idx != problem.goal;
+            let cross = is_cross.at((y, x));
+            solver.add_expr(cross.imp(passed.expr()));
 
             if is_blocked_bar {
                 solver.add_expr(!passed.expr());
-                solver.add_expr(!is_cross.at((y, x)));
+                solver.add_expr(!cross.clone());
                 solver.add_expr(degree.eq(0));
                 solver.add_expr(count_true(&inbound).eq(0));
                 solver.add_expr(count_true(&outbound).eq(0));
@@ -751,30 +759,43 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
 
             if !is_blocked_bar {
                 if idx == problem.start || idx == problem.goal {
-                    let endpoint_degree = if endpoint_has_outer_connector(problem, idx) {
-                        2
+                    if endpoint_has_outer_connector(problem, idx) {
+                        solver.add_expr(degree.eq(cross.clone().ite(4, passed.ite(2, 0))));
                     } else {
-                        1
-                    };
-                    solver.add_expr(degree.eq(passed.ite(endpoint_degree, 0)));
+                        solver.add_expr(degree.eq(passed.ite(1, 0)));
+                    }
                 } else {
-                    solver.add_expr(degree.eq(is_cross.at((y, x)).ite(4, passed.ite(2, 0))));
+                    solver.add_expr(degree.eq(cross.clone().ite(4, passed.ite(2, 0))));
                 }
                 if idx == problem.start {
-                    solver.add_expr(count_true(inbound).eq(0));
-                    solver.add_expr(count_true(outbound).eq(passed.ite(1, 0)));
+                    if endpoint_has_outer_connector(problem, idx) {
+                        solver.add_expr(count_true(inbound).eq(cross.clone().ite(1, 0)));
+                        solver.add_expr(
+                            count_true(outbound).eq(cross.clone().ite(2, passed.ite(1, 0))),
+                        );
+                    } else {
+                        solver.add_expr(count_true(inbound).eq(0));
+                        solver.add_expr(count_true(outbound).eq(passed.ite(1, 0)));
+                    }
                     if let Some(rank) = &rank {
                         solver.add_expr(rank.at((y, x)).eq(0));
                     }
                 } else if idx == problem.goal {
-                    solver.add_expr(count_true(inbound).eq(passed.ite(1, 0)));
-                    solver.add_expr(count_true(outbound).eq(0));
+                    if endpoint_has_outer_connector(problem, idx) {
+                        solver.add_expr(
+                            count_true(inbound).eq(cross.clone().ite(2, passed.ite(1, 0))),
+                        );
+                        solver.add_expr(count_true(outbound).eq(cross.clone().ite(1, 0)));
+                    } else {
+                        solver.add_expr(count_true(inbound).eq(passed.ite(1, 0)));
+                        solver.add_expr(count_true(outbound).eq(0));
+                    }
                 } else {
                     solver.add_expr(
-                        count_true(inbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
+                        count_true(inbound).eq(cross.clone().ite(2, passed.ite(1, 0))),
                     );
                     solver.add_expr(
-                        count_true(outbound).eq(is_cross.at((y, x)).ite(2, passed.ite(1, 0))),
+                        count_true(outbound).eq(cross.clone().ite(2, passed.ite(1, 0))),
                     );
                 }
 
@@ -816,33 +837,76 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 }
             }
 
-            if y == 0 || y + 1 == rows || x == 0 || x + 1 == cols {
-                solver.add_expr(!is_cross.at((y, x)));
-            } else if problem.ice[y][x] || problem.cwfloor[y][x] {
+            if problem.ice[y][x] || problem.cwfloor[y][x] {
+                if (y == 0 || y + 1 == rows || x == 0 || x + 1 == cols)
+                    && !endpoint_has_outer_connector(problem, idx)
+                {
+                    solver.add_expr(!cross.clone());
+                }
                 if let (Some(rank_cross_h), Some(rank_cross_v)) = (&rank_cross_h, &rank_cross_v) {
                     solver.add_expr(
-                        is_cross
-                            .at((y, x))
+                        cross
+                            .clone()
                             .imp(rank_cross_h.at((y, x)).ne(rank_cross_v.at((y, x)))),
                     );
                 }
                 if let Some(line_dir) = &line_dir {
-                    solver.add_expr(
-                        is_cross
-                            .at((y, x))
-                            .imp(line_dir.vertical.at((y - 1, x)).iff(line_dir.vertical.at((y, x)))),
-                    );
-                    solver.add_expr(
-                        is_cross.at((y, x)).imp(
-                            line_dir
-                                .horizontal
-                                .at((y, x - 1))
-                                .iff(line_dir.horizontal.at((y, x))),
-                        ),
-                    );
+                    if y > 0 && y + 1 < rows {
+                        solver.add_expr(
+                            cross.clone().imp(
+                                line_dir
+                                    .vertical
+                                    .at((y - 1, x))
+                                    .iff(line_dir.vertical.at((y, x))),
+                            ),
+                        );
+                    }
+                    if x > 0 && x + 1 < cols {
+                        solver.add_expr(
+                            cross.clone().imp(
+                                line_dir
+                                    .horizontal
+                                    .at((y, x - 1))
+                                    .iff(line_dir.horizontal.at((y, x))),
+                            ),
+                        );
+                    }
+                }
+                if let Some(outer_side) = endpoint_outer_side(problem, idx) {
+                    let straight_through_outer = match opposite_side(outer_side) {
+                        Side::Up => {
+                            if idx == problem.start {
+                                outbound_up.clone()
+                            } else {
+                                inbound_up.clone()
+                            }
+                        }
+                        Side::Down => {
+                            if idx == problem.start {
+                                outbound_down.clone()
+                            } else {
+                                inbound_down.clone()
+                            }
+                        }
+                        Side::Left => {
+                            if idx == problem.start {
+                                outbound_left.clone()
+                            } else {
+                                inbound_left.clone()
+                            }
+                        }
+                        Side::Right => {
+                            if idx == problem.start {
+                                outbound_right.clone()
+                            } else {
+                                inbound_right.clone()
+                            }
+                        }
+                    };
+                    solver.add_expr(cross.clone().imp(straight_through_outer));
                 }
             } else {
-                solver.add_expr(!is_cross.at((y, x)));
+                solver.add_expr(!cross.clone());
             }
 
             if let Some(clue) = problem.directed[y][x] {
@@ -1119,17 +1183,17 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 continue;
             }
             let mut incident = vec![];
-            if y > 0 && x < cols {
-                incident.push(is_line.vertical.at((y - 1, x)).expr());
+            if y > 0 && x > 0 && x < cols {
+                incident.push(is_line.horizontal.at((y - 1, x - 1)).expr());
             }
-            if y < rows - 1 && x < cols {
-                incident.push(is_line.vertical.at((y, x)).expr());
-            }
-            if x > 0 && y < rows {
+            if y < rows && x > 0 && x < cols {
                 incident.push(is_line.horizontal.at((y, x - 1)).expr());
             }
-            if x < cols - 1 && y < rows {
-                incident.push(is_line.horizontal.at((y, x)).expr());
+            if y > 0 && y < rows && x > 0 {
+                incident.push(is_line.vertical.at((y - 1, x - 1)).expr());
+            }
+            if y > 0 && y < rows && x < cols {
+                incident.push(is_line.vertical.at((y - 1, x)).expr());
             }
             solver.add_expr(count_true(incident).eq(clue));
         }
@@ -2175,7 +2239,7 @@ mod tests {
     }
 
     #[test]
-    fn test_travelline_backend_rejects_dense_sloop_cwfloor_with_left_turn_endpoints() {
+    fn test_travelline_backend_accepts_dense_sloop_cwfloor_with_crossing_endpoints() {
         let payload = r#"{
             "rows": 6,
             "cols": 7,
@@ -2207,8 +2271,8 @@ mod tests {
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
         assert!(
-            board.is_err(),
-            "a dense sloop+clockwise board whose start and goal immediately make left turns should be rejected"
+            board.is_ok(),
+            "crossing clockwise floor endpoints should remain solvable on a dense sloop board"
         );
     }
 
