@@ -357,6 +357,24 @@ fn outer_boundary_segment_has_line(
         || (idx == problem.goal && problem.goal_outer_side == Some(side))
 }
 
+fn directed_ray_outer_boundary_has_line(
+    problem: &TravelLineProblem,
+    clue_y: usize,
+    clue_x: usize,
+    side: Side,
+) -> bool {
+    match side {
+        Side::Up => outer_boundary_segment_has_line(problem, 0, clue_x, Side::Up),
+        Side::Down => {
+            outer_boundary_segment_has_line(problem, problem.rows - 1, clue_x, Side::Down)
+        }
+        Side::Left => outer_boundary_segment_has_line(problem, clue_y, 0, Side::Left),
+        Side::Right => {
+            outer_boundary_segment_has_line(problem, clue_y, problem.cols - 1, Side::Right)
+        }
+    }
+}
+
 fn endpoint_allowed_inner_side(problem: &TravelLineProblem, idx: usize) -> Option<Side> {
     if idx == problem.start {
         problem.start_dir
@@ -943,6 +961,9 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                                 }
                             }
                         }
+                    }
+                    if directed_ray_outer_boundary_has_line(problem, y, x, clue.side) {
+                        segments.push(TRUE);
                     }
                     solver.add_expr(count_true(segments).eq(clue.value));
                 }
@@ -1985,14 +2006,17 @@ mod tests {
             "slither": [[-1,-1,-1,-1],[-1,-1,-1,-1]],
             "countryH": [[false,false]],
             "countryV": [],
-            "directed": [[{"kind":15,"side":"right","value":2},null,null]],
+            "directed": [[{"kind":15,"side":"right","value":3},null,null]],
             "requiredH": [[false,false]],
             "requiredV": []
         }"#;
 
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
-        assert!(board.is_ok(), "simple clockwise-count clue should solve in backend");
+        assert!(
+            board.is_ok(),
+            "castle wall clue should count the outer endpoint segment"
+        );
     }
 
     #[test]
