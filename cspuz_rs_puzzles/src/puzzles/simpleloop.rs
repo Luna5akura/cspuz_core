@@ -4,6 +4,13 @@ use cspuz_rs::serializer::{problem_to_url, url_to_problem, Combinator, Grid, Map
 use cspuz_rs::solver::Solver;
 
 pub fn solve_simpleloop(is_black: &[Vec<bool>]) -> Option<graph::BoolGridEdgesIrrefutableFacts> {
+    solve_simpleloop_with_forced_lines(is_black, None)
+}
+
+pub fn solve_simpleloop_with_forced_lines(
+    is_black: &[Vec<bool>],
+    forced_lines: Option<&graph::BoolGridEdgesIrrefutableFacts>,
+) -> Option<graph::BoolGridEdgesIrrefutableFacts> {
     let (h, w) = util::infer_shape(is_black);
 
     let mut parity_diff = 0;
@@ -25,6 +32,7 @@ pub fn solve_simpleloop(is_black: &[Vec<bool>]) -> Option<graph::BoolGridEdgesIr
     let is_line = &graph::BoolGridEdges::new(&mut solver, (h - 1, w - 1));
     solver.add_answer_key_bool(&is_line.horizontal);
     solver.add_answer_key_bool(&is_line.vertical);
+    util::add_forced_line_constraints(&mut solver, is_line, forced_lines)?;
 
     let is_passed = &graph::single_cycle_grid_edges(&mut solver, is_line);
 
@@ -90,6 +98,24 @@ mod tests {
         }
         assert_eq!(ans.horizontal[3][1], Some(true));
         assert_eq!(ans.horizontal[3][2], Some(false));
+    }
+
+    #[test]
+    fn test_simpleloop_forced_lines() {
+        let problem = problem_for_tests();
+        let height = problem.len();
+        let width = problem[0].len();
+        let mut forced = graph::BoolGridEdgesIrrefutableFacts {
+            horizontal: vec![vec![None; width - 1]; height],
+            vertical: vec![vec![None; width]; height - 1],
+        };
+        forced.horizontal[3][1] = Some(true);
+        let ans = solve_simpleloop_with_forced_lines(&problem, Some(&forced));
+        assert!(ans.is_some());
+
+        forced.horizontal[3][1] = Some(false);
+        let ans = solve_simpleloop_with_forced_lines(&problem, Some(&forced));
+        assert!(ans.is_none());
     }
 
     #[test]

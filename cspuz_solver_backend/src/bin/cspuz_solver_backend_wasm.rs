@@ -2,7 +2,7 @@
 
 use cspuz_solver_backend::{
     enumerate_answers_json_from_bytes, solve_custom_travelline_json_from_bytes,
-    solve_problem_json_from_bytes,
+    solve_problem_json_from_bytes, solve_problem_with_forced_lines_json_from_bytes,
 };
 
 static mut SHARED_ARRAY: Vec<u8> = vec![];
@@ -35,6 +35,12 @@ pub fn prepare_input_buffer(len: usize) -> *mut u8 {
 pub fn solve_problem(url: *const u8, len: usize) -> *const u8 {
     let url = unsafe { std::slice::from_raw_parts(url, len) };
     write_shared_output(solve_problem_json_from_bytes(url))
+}
+
+#[no_mangle]
+pub fn solve_problem_with_forced_lines(payload: *const u8, len: usize) -> *const u8 {
+    let payload = unsafe { std::slice::from_raw_parts(payload, len) };
+    write_shared_output(solve_problem_with_forced_lines_json_from_bytes(payload))
 }
 
 #[no_mangle]

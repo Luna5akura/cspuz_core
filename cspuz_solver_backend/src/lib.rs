@@ -4,6 +4,7 @@ extern crate cspuz_rs;
 
 pub mod board;
 mod custom_travelline;
+mod forced_lines;
 mod puzzle;
 mod uniqueness;
 
@@ -66,8 +67,29 @@ fn solve_custom_travelline_payload(payload: &[u8]) -> Result<Board, &'static str
     custom_travelline::solve(&problem)
 }
 
+fn decode_and_solve_with_forced_lines(payload: &[u8]) -> Result<Board, &'static str> {
+    let payload = forced_lines::deserialize_payload(payload)?;
+    let puzzle_kind = url_to_puzzle_kind(&payload.url).ok_or("puzzle type not detected")?;
+    puzzle::dispatch_puzz_link_with_forced_lines(&puzzle_kind, &payload.url, &payload.forced_lines)
+        .unwrap_or(Err(
+            "forced line constraints are not supported for this puzzle",
+        ))
+}
+
 pub fn solve_problem_json_from_bytes(url: &[u8]) -> String {
     let result = decode_and_solve(url);
+    match result {
+        Ok(board) => {
+            format!("{{\"status\":\"ok\",\"description\":{}}}", board.to_json())
+        }
+        Err(err) => {
+            format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
+        }
+    }
+}
+
+pub fn solve_problem_with_forced_lines_json_from_bytes(payload: &[u8]) -> String {
+    let result = decode_and_solve_with_forced_lines(payload);
     match result {
         Ok(board) => {
             format!("{{\"status\":\"ok\",\"description\":{}}}", board.to_json())
@@ -107,5 +129,67 @@ pub fn solve_custom_travelline_json_from_bytes(payload: &[u8]) -> String {
         Err(err) => {
             format!("{{\"status\":\"error\",\"description\":\"{}\"}}", err)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{solve_problem_json_from_bytes, solve_problem_with_forced_lines_json_from_bytes};
+
+    fn forced_grid(
+        height: usize,
+        width: usize,
+        forced: Option<(usize, usize, i32)>,
+    ) -> json::JsonValue {
+        let mut grid = json::JsonValue::new_array();
+        for y in 0..height {
+            let mut row = json::JsonValue::new_array();
+            for x in 0..width {
+                let value = match forced {
+                    Some((forced_y, forced_x, value)) if forced_y == y && forced_x == x => value,
+                    _ => -1,
+                };
+                row.push(value).unwrap();
+            }
+            grid.push(row).unwrap();
+        }
+        grid
+    }
+
+    fn simpleloop_forced_payload(value: i32) -> String {
+        json::object! {
+            url: "https://puzz.link/p?simpleloop/8/7/200200a42000",
+            forcedH: forced_grid(7, 7, Some((3, 1, value))),
+            forcedV: forced_grid(6, 8, None),
+        }
+        .dump()
+    }
+
+    #[test]
+    fn solve_problem_with_forced_lines_respects_simpleloop_constraints() {
+        let ok_response = solve_problem_with_forced_lines_json_from_bytes(
+            simpleloop_forced_payload(1).as_bytes(),
+        );
+        let ok_response = json::parse(&ok_response).unwrap();
+        assert_eq!(ok_response["status"].as_str(), Some("ok"));
+
+        let no_answer_response = solve_problem_with_forced_lines_json_from_bytes(
+            simpleloop_forced_payload(0).as_bytes(),
+        );
+        let no_answer_response = json::parse(&no_answer_response).unwrap();
+        assert_eq!(no_answer_response["status"].as_str(), Some("error"));
+        assert_eq!(
+            no_answer_response["description"].as_str(),
+            Some("no answer")
+        );
+    }
+
+    #[test]
+    fn solve_problem_dispatches_domino_search() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?domino-search/4/3/000111021222",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
     }
 }

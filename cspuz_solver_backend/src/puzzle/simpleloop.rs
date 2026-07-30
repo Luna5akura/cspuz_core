@@ -1,14 +1,31 @@
 use crate::board::{Board, BoardKind, Item, ItemKind};
 use crate::uniqueness::is_unique;
+use cspuz_rs::graph;
 use cspuz_rs_puzzles::puzzles::simpleloop;
 
 pub fn solve(url: &str) -> Result<Board, &'static str> {
     let problem = simpleloop::deserialize_problem(url).ok_or("invalid url")?;
     let is_line = simpleloop::solve_simpleloop(&problem).ok_or("no answer")?;
+    build_board(&problem, &is_line)
+}
 
+pub fn solve_with_forced_lines(
+    url: &str,
+    forced_lines: &graph::BoolGridEdgesIrrefutableFacts,
+) -> Result<Board, &'static str> {
+    let problem = simpleloop::deserialize_problem(url).ok_or("invalid url")?;
+    let is_line = simpleloop::solve_simpleloop_with_forced_lines(&problem, Some(forced_lines))
+        .ok_or("no answer")?;
+    build_board(&problem, &is_line)
+}
+
+fn build_board(
+    problem: &Vec<Vec<bool>>,
+    is_line: &graph::BoolGridEdgesIrrefutableFacts,
+) -> Result<Board, &'static str> {
     let height = problem.len();
     let width = problem[0].len();
-    let mut board = Board::new(BoardKind::Grid, height, width, is_unique(&is_line));
+    let mut board = Board::new(BoardKind::Grid, height, width, is_unique(is_line));
 
     for y in 0..height {
         for x in 0..width {
@@ -18,7 +35,7 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
         }
     }
 
-    board.add_lines_irrefutable_facts(&is_line, "green", Some(&problem));
+    board.add_lines_irrefutable_facts(is_line, "green", Some(problem));
 
     Ok(board)
 }

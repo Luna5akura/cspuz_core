@@ -1,4 +1,5 @@
 use crate::board::Board;
+use cspuz_rs::graph;
 
 macro_rules! dispatch_enumerate {
     ( $mod:ident, $aliases:expr, $puzzle_kind:expr, $url:expr, $num_max_answers:expr ) => {};
@@ -112,6 +113,7 @@ puzzle_list!(puzz_link,
     (curvedata, ["curvedata"], "Curve Data", "カーブデータ", enumerable),
     (dbchoco, ["dbchoco"], "Double Choco", "ダブルチョコ"),
     (dominion, ["dominion"], "Dominion", "ドミニオン"),
+    (domino_search, ["domino-search"], "Domino Search", "多米诺搜寻"),
     (doppelblock, ["doppelblock"], "Doppelblock", "ビトゥイーン・サム"),
     (energywalk, ["energywalk"], "Energy Walk", "Energy Walk"),
     (evolmino, ["evolmino"], "Evolmino", "シンカミノ"),
@@ -122,6 +124,7 @@ puzzle_list!(puzz_link,
     (forestwalk, ["forestwalk"], "Forest Walk", "フォレストウォーク"),
     (fourcells, ["fourcells"], "Fourcells", "フォーセルズ"),
     (geradeweg, ["geradeweg"], "Geradeweg", "グラーデヴェグ"),
+    (gravel, ["gravel"], "Gravel", "Gravel"),
     (guidearrow, ["guidearrow"], "Guide Arrow", "ガイドアロー"),
     (hashi, ["hashi"], "Hashiwokakero", "橋をかけろ"),
     (hebiichigo, ["hebi"], "Hebi-Ichigo", "へびいちご"),
@@ -140,10 +143,12 @@ puzzle_list!(puzz_link,
     (kurarin, ["kurarin"], "Kurarin", "クラリン"),
     (kurodoko, ["kurodoko"], "Kurodoko", "黒どこ"),
     (kurotto, ["kurotto"], "Kurotto", "クロット"),
+    (lakes, ["lakes"], "Lakes", "Lakes"),
     (litherslink, ["lither"], "Litherslink", "Litherslink"),
     (lits, ["lits"], "LITS", "LITS"),
     (lohkous, ["lohkous"], "Lohkous", "Lohkous"),
     (loop_special, ["loopsp"], "Loop Special", "環状線スペシャル"),
+    (magic_snail, ["magic-snail", "magicsnail"], "Magic Snail", "Magic Snail"),
     (masyu, ["masyu", "mashu"], "Masyu", "ましゅ"),
     (moonsun, ["moonsun"], "Moon or Sun", "月か太陽"),
     (morningwalk, ["morningwalk"], "Morning Walk", "Morning Walk"),
@@ -229,6 +234,18 @@ pub mod double_lits;
 
 pub fn dispatch_puzz_link(puzzle_kind: &str, url: &str) -> Option<Result<Board, &'static str>> {
     puzz_link::dispatch(puzzle_kind, url)
+}
+
+pub fn dispatch_puzz_link_with_forced_lines(
+    puzzle_kind: &str,
+    url: &str,
+    forced_lines: &graph::BoolGridEdgesIrrefutableFacts,
+) -> Option<Result<Board, &'static str>> {
+    if puzzle_kind == "simpleloop" {
+        return Some(simpleloop::solve_with_forced_lines(url, forced_lines));
+    }
+
+    None
 }
 
 pub fn dispatch_puzz_link_enumerate(

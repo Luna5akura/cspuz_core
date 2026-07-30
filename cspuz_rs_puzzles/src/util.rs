@@ -1,10 +1,57 @@
 use std::ops::{Index, IndexMut};
 
+use cspuz_rs::{graph, solver::Solver};
+
 pub fn infer_shape<T>(array: &[Vec<T>]) -> (usize, usize) {
     let height = array.len();
     assert!(height > 0);
     let width = array[0].len();
     (height, width)
+}
+
+pub fn add_forced_line_constraints(
+    solver: &mut Solver<'_>,
+    is_line: &graph::BoolGridEdges,
+    forced: Option<&graph::BoolGridEdgesIrrefutableFacts>,
+) -> Option<()> {
+    let forced = match forced {
+        Some(forced) => forced,
+        None => return Some(()),
+    };
+    if forced.horizontal.len() != is_line.horizontal.shape().0
+        || forced.vertical.len() != is_line.vertical.shape().0
+    {
+        return None;
+    }
+    for y in 0..forced.horizontal.len() {
+        if forced.horizontal[y].len() != is_line.horizontal.shape().1 {
+            return None;
+        }
+        for x in 0..forced.horizontal[y].len() {
+            if let Some(value) = forced.horizontal[y][x] {
+                if value {
+                    solver.add_expr(is_line.horizontal.at((y, x)));
+                } else {
+                    solver.add_expr(!is_line.horizontal.at((y, x)));
+                }
+            }
+        }
+    }
+    for y in 0..forced.vertical.len() {
+        if forced.vertical[y].len() != is_line.vertical.shape().1 {
+            return None;
+        }
+        for x in 0..forced.vertical[y].len() {
+            if let Some(value) = forced.vertical[y][x] {
+                if value {
+                    solver.add_expr(is_line.vertical.at((y, x)));
+                } else {
+                    solver.add_expr(!is_line.vertical.at((y, x)));
+                }
+            }
+        }
+    }
+    Some(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
