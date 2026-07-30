@@ -108,35 +108,40 @@ fn magic_snail_cells(height: usize, width: usize) -> Vec<(usize, usize)> {
     let mut right = width - 1;
 
     while top <= bottom && left <= right {
-        for x in left..=right {
-            ret.push((top, x));
-        }
-        top += 1;
-
         for y in top..=bottom {
+            ret.push((y, left));
+        }
+        left += 1;
+        if left > right {
+            break;
+        }
+
+        for x in left..=right {
+            ret.push((bottom, x));
+        }
+        if bottom == 0 {
+            break;
+        }
+        bottom -= 1;
+        if top > bottom {
+            break;
+        }
+
+        for y in (top..=bottom).rev() {
             ret.push((y, right));
         }
         if right == 0 {
             break;
         }
         right -= 1;
-
-        if top <= bottom {
-            for x in (left..=right).rev() {
-                ret.push((bottom, x));
-            }
-            if bottom == 0 {
-                break;
-            }
-            bottom -= 1;
+        if left > right {
+            break;
         }
 
-        if left <= right {
-            for y in (top..=bottom).rev() {
-                ret.push((y, left));
-            }
-            left += 1;
+        for x in (left..=right).rev() {
+            ret.push((top, x));
         }
+        top += 1;
     }
 
     ret
@@ -415,6 +420,27 @@ mod tests {
         let ans = solve_magic_snail(&problem_for_tests()).unwrap();
         let expected = crate::util::tests::to_option_2d([[0, 1, 2], [1, 2, 0], [2, 0, 1]]);
         assert_eq!(ans, expected);
+    }
+
+    #[test]
+    fn test_magic_snail_cells_are_counterclockwise() {
+        assert_eq!(
+            magic_snail_cells(3, 4),
+            vec![
+                (0, 0),
+                (1, 0),
+                (2, 0),
+                (2, 1),
+                (2, 2),
+                (2, 3),
+                (1, 3),
+                (0, 3),
+                (0, 2),
+                (0, 1),
+                (1, 1),
+                (1, 2)
+            ]
+        );
     }
 
     #[test]
