@@ -25,35 +25,39 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
     for y in 0..height {
         for x in 0..width {
             if y < height - 1 {
-                if let Some(b) = borders.horizontal[y][x] {
-                    board.push(Item {
-                        y: y * 2 + 2,
-                        x: x * 2 + 1,
-                        color: "green",
-                        kind: if b {
-                            ItemKind::BoldWall
-                        } else {
-                            ItemKind::Cross
-                        },
-                    });
+                if is_number_edge(&problem, (y, x), (y + 1, x)) {
+                    if borders.horizontal[y][x] == Some(true) {
+                        board.push(Item {
+                            y: y * 2 + 2,
+                            x: x * 2 + 1,
+                            color: "green",
+                            kind: ItemKind::BoldWall,
+                        });
+                    }
                 }
             }
             if x < width - 1 {
-                if let Some(b) = borders.vertical[y][x] {
-                    board.push(Item {
-                        y: y * 2 + 1,
-                        x: x * 2 + 2,
-                        color: "green",
-                        kind: if b {
-                            ItemKind::BoldWall
-                        } else {
-                            ItemKind::Cross
-                        },
-                    });
+                if is_number_edge(&problem, (y, x), (y, x + 1)) {
+                    if borders.vertical[y][x] == Some(true) {
+                        board.push(Item {
+                            y: y * 2 + 1,
+                            x: x * 2 + 2,
+                            color: "green",
+                            kind: ItemKind::BoldWall,
+                        });
+                    }
                 }
             }
         }
     }
 
     Ok(board)
+}
+
+fn is_number_edge(
+    problem: &[Vec<Option<i32>>],
+    c1: (usize, usize),
+    c2: (usize, usize),
+) -> bool {
+    problem[c1.0][c1.1].is_some() && problem[c2.0][c2.1].is_some()
 }

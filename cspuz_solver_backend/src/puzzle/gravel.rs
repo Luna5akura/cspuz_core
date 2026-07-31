@@ -1,5 +1,5 @@
 use crate::board::{Board, BoardKind, Item, ItemKind};
-use crate::uniqueness::is_unique;
+use crate::uniqueness::Uniqueness;
 use cspuz_rs_puzzles::puzzles::gravel::{self, Circle};
 
 pub fn solve(url: &str) -> Result<Board, &'static str> {
@@ -12,7 +12,11 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
         BoardKind::OuterGrid,
         height,
         width,
-        is_unique(&(&ans.is_black, &ans.borders)),
+        if ans.is_unique {
+            Uniqueness::Unique
+        } else {
+            Uniqueness::NonUnique
+        },
     );
 
     for y in 0..height {
@@ -41,8 +45,11 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
 
     for y in 0..height {
         for x in 0..width {
-            if let Some(is_black) = ans.is_black[y][x] {
-                if !problem[y][x].empty {
+            if !problem[y][x].empty
+                && problem[y][x].circle.is_none()
+                && problem[y][x].number.is_none()
+            {
+                if let Some(is_black) = ans.is_black[y][x] {
                     board.push(Item::cell(
                         y,
                         x,
@@ -56,7 +63,7 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                 }
             }
             if y + 1 < height {
-                if let Some(b) = ans.borders.horizontal[y][x] {
+                if let Some(b) = border_state_to_show(&problem, &ans, (y, x), (y + 1, x)) {
                     board.push(Item {
                         y: y * 2 + 2,
                         x: x * 2 + 1,
@@ -70,7 +77,7 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                 }
             }
             if x + 1 < width {
-                if let Some(b) = ans.borders.vertical[y][x] {
+                if let Some(b) = border_state_to_show(&problem, &ans, (y, x), (y, x + 1)) {
                     board.push(Item {
                         y: y * 2 + 1,
                         x: x * 2 + 2,
@@ -87,4 +94,32 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
     }
 
     Ok(board)
+}
+
+fn border_state_to_show(
+    problem: &gravel::Problem,
+    ans: &gravel::GravelAnswer,
+    c1: (usize, usize),
+    c2: (usize, usize),
+) -> Option<bool> {
+    let (y1, x1) = c1;
+    let (y2, x2) = c2;
+    if problem[y1][x1].empty || problem[y2][x2].empty {
+        return None;
+    }
+    let border = if y1 == y2 {
+        ans.borders.vertical[y1][x1.min(x2)]
+    } else {
+        ans.borders.horizontal[y1.min(y2)][x1]
+    };
+    match border {
+        Some(true) => Some(true),
+        Some(false)
+            if ans.is_black[y1][x1] == Some(false)
+                && ans.is_black[y2][x2] == Some(false) =>
+        {
+            Some(false)
+        }
+        _ => None,
+    }
 }

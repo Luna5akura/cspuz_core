@@ -32,6 +32,7 @@ pub type Problem = Vec<Vec<Clue>>;
 pub struct GravelAnswer {
     pub is_black: Vec<Vec<Option<bool>>>,
     pub borders: graph::BoolInnerGridEdgesIrrefutableFacts,
+    pub is_unique: bool,
 }
 
 #[derive(Clone)]
@@ -229,9 +230,16 @@ pub fn solve_gravel(problem: &Problem) -> Option<GravelAnswer> {
     graph::graph_division_2d(&mut solver, black_size, &black_border);
 
     let facts = solver.irrefutable_facts()?;
+    let is_black_answer = facts.get(is_black);
+    let borders_answer = facts.get(&white_border);
+    let is_unique = is_black_answer.iter().flatten().all(Option::is_some)
+        && borders_answer.horizontal.iter().flatten().all(Option::is_some)
+        && borders_answer.vertical.iter().flatten().all(Option::is_some);
+
     Some(GravelAnswer {
-        is_black: facts.get(is_black),
-        borders: facts.get(&white_border),
+        is_black: is_black_answer,
+        borders: borders_answer,
+        is_unique,
     })
 }
 
@@ -249,6 +257,7 @@ fn constrain_white_border(
     let (y1, x1) = c1;
     let (y2, x2) = c2;
     if !valid[y1][x1] || !valid[y2][x2] {
+        solver.add_expr(!border);
         return;
     }
 
@@ -263,7 +272,11 @@ fn constrain_white_border(
             }
         }
     }
-    solver.add_expr(both_white.imp(border.iff(!any_or_false(same_square))));
+    solver.add_expr(
+        border.iff(
+            (is_black.at(c1) ^ is_black.at(c2)) | (both_white & !any_or_false(same_square)),
+        ),
+    );
 }
 
 fn any_or_false(exprs: Vec<BoolExpr>) -> BoolExpr {
@@ -519,6 +532,7 @@ mod tests {
         }]];
         let ans = solve_gravel(&problem).unwrap();
         assert_eq!(ans.is_black, vec![vec![Some(false)]]);
+        assert!(ans.is_unique);
     }
 
     #[test]
@@ -530,5 +544,6 @@ mod tests {
         }]];
         let ans = solve_gravel(&problem).unwrap();
         assert_eq!(ans.is_black, vec![vec![Some(true)]]);
+        assert!(ans.is_unique);
     }
 }
