@@ -44,6 +44,7 @@ pub fn solve_magic_snail(problem: &Problem) -> Option<Vec<Vec<Option<i32>>>> {
         for x in 0..width {
             if let Some(clue) = problem.cell_clues[y][x] {
                 if clue == -2 {
+                    solver.add_expr(num.at((y, x)).eq(0));
                     continue;
                 }
                 if clue < 1 || clue > count {
@@ -89,11 +90,8 @@ pub fn solve_magic_snail(problem: &Problem) -> Option<Vec<Vec<Option<i32>>>> {
             for &(py, px) in &line[..pos] {
                 preceding_cells.push(num.at((py, px)).ne(0));
             }
-            solver.add_expr(
-                num.at((y, x))
-                    .eq(clue)
-                    .imp(count_true(preceding_cells).eq(0)),
-            );
+            let is_first_seen = count_true(preceding_cells).eq(0) & num.at((y, x)).ne(0);
+            solver.add_expr(is_first_seen.imp(num.at((y, x)).eq(clue)));
         }
     }
 
@@ -108,26 +106,15 @@ fn magic_snail_cells(height: usize, width: usize) -> Vec<(usize, usize)> {
     let mut right = width - 1;
 
     while top <= bottom && left <= right {
-        for y in top..=bottom {
-            ret.push((y, left));
-        }
-        left += 1;
-        if left > right {
-            break;
-        }
-
         for x in left..=right {
-            ret.push((bottom, x));
+            ret.push((top, x));
         }
-        if bottom == 0 {
-            break;
-        }
-        bottom -= 1;
+        top += 1;
         if top > bottom {
             break;
         }
 
-        for y in (top..=bottom).rev() {
+        for y in top..=bottom {
             ret.push((y, right));
         }
         if right == 0 {
@@ -139,9 +126,20 @@ fn magic_snail_cells(height: usize, width: usize) -> Vec<(usize, usize)> {
         }
 
         for x in (left..=right).rev() {
-            ret.push((top, x));
+            ret.push((bottom, x));
         }
-        top += 1;
+        if bottom == 0 {
+            break;
+        }
+        bottom -= 1;
+        if top > bottom {
+            break;
+        }
+
+        for y in (top..=bottom).rev() {
+            ret.push((y, left));
+        }
+        left += 1;
     }
 
     ret
@@ -423,20 +421,20 @@ mod tests {
     }
 
     #[test]
-    fn test_magic_snail_cells_are_counterclockwise() {
+    fn test_magic_snail_cells_are_clockwise() {
         assert_eq!(
             magic_snail_cells(3, 4),
             vec![
                 (0, 0),
-                (1, 0),
-                (2, 0),
-                (2, 1),
-                (2, 2),
-                (2, 3),
-                (1, 3),
-                (0, 3),
-                (0, 2),
                 (0, 1),
+                (0, 2),
+                (0, 3),
+                (1, 3),
+                (2, 3),
+                (2, 2),
+                (2, 1),
+                (2, 0),
+                (1, 0),
                 (1, 1),
                 (1, 2)
             ]
@@ -457,5 +455,34 @@ mod tests {
             deserialize_problem("https://puzz.link/p?magicsnail/3/3/2/112221112221"),
             Some(problem)
         );
+    }
+
+    #[test]
+    fn test_magic_snail_user_sample_deserializer() {
+        let problem =
+            deserialize_problem("http://localhost:8080/p.html?magic-snail/8/8/4/zri2m4x3113x4m3i")
+                .unwrap();
+
+        assert_eq!(problem.count, 4);
+        assert!(problem.side_clues.iter().all(|clue| clue.is_none()));
+
+        let mut expected = vec![vec![None; 8]; 8];
+        expected[0][3] = Some(2);
+        expected[1][3] = Some(4);
+        expected[3][6] = Some(3);
+        expected[3][7] = Some(1);
+        expected[4][0] = Some(1);
+        expected[4][1] = Some(3);
+        expected[6][4] = Some(4);
+        expected[7][4] = Some(3);
+        assert_eq!(problem.cell_clues, expected);
+    }
+
+    #[test]
+    fn test_magic_snail_user_sample_is_solvable() {
+        let problem =
+            deserialize_problem("http://localhost:8080/p.html?magic-snail/8/8/4/zri2m4x3113x4m3i")
+                .unwrap();
+        assert!(solve_magic_snail(&problem).is_some());
     }
 }

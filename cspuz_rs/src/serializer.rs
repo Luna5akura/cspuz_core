@@ -1774,28 +1774,32 @@ where
     problem_to_url_with_context(combinator, puzzle_kind, problem, &Context::new())
 }
 
-pub fn url_to_puzzle_kind(serialized: &str) -> Option<String> {
-    let serialized = serialized
+fn strip_url_scheme(serialized: &str) -> Option<&str> {
+    serialized
         .strip_prefix("http://")
-        .or(serialized.strip_prefix("https://"))?;
-    let serialized = serialized
+        .or(serialized.strip_prefix("https://"))
+}
+
+fn strip_puzzle_url_prefix(serialized: &str) -> Option<&str> {
+    serialized
         .strip_prefix("puzz.link/p?")
         .or(serialized.strip_prefix("pzv.jp/p.html?"))
-        .or(serialized.strip_prefix("pzprxs.vercel.app/p?"))?;
+        .or(serialized.strip_prefix("pzprxs.vercel.app/p?"))
+        .or_else(|| {
+            let (_, body) = serialized.split_once("/p.html?")?;
+            Some(body)
+        })
+}
+
+pub fn url_to_puzzle_kind(serialized: &str) -> Option<String> {
+    let serialized = strip_puzzle_url_prefix(strip_url_scheme(serialized)?)?;
     let pos = serialized.find('/')?;
     let kind = &serialized[0..pos];
     Some(String::from(kind))
 }
 
 pub fn strip_prefix(serialized: &str) -> Option<&str> {
-    let serialized = serialized
-        .strip_prefix("http://")
-        .or(serialized.strip_prefix("https://"))?;
-    let serialized = serialized
-        .strip_prefix("puzz.link/p?")
-        .or(serialized.strip_prefix("pzv.jp/p.html?"))
-        .or(serialized.strip_prefix("pzprxs.vercel.app/p?"))?;
-    Some(serialized)
+    strip_puzzle_url_prefix(strip_url_scheme(serialized)?)
 }
 
 pub fn url_to_problem<T, C>(combinator: C, puzzle_kinds: &[&str], serialized: &str) -> Option<T>

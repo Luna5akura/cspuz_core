@@ -16,7 +16,7 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                 if clue > 0 {
                     board.push(Item::cell(y, x, "black", ItemKind::Num(clue)));
                 } else if clue == -2 {
-                    board.push(Item::cell(y, x, "black", ItemKind::Text("?")));
+                    board.push(Item::cell(y, x, "black", ItemKind::Cross));
                 }
             } else if let Some(n) = ans[y][x] {
                 board.push(Item::cell(
