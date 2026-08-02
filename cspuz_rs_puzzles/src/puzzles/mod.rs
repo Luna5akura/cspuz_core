@@ -105,6 +105,7 @@ pub mod slalom;
 pub mod slashpack;
 pub mod slicy;
 pub mod slitherlink;
+pub mod slovak_sums;
 pub mod sniping_arrow;
 pub mod soulmates;
 pub mod spokes;

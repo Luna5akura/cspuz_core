@@ -192,4 +192,40 @@ mod tests {
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));
     }
+
+    #[test]
+    fn solve_problem_dispatches_slovak_sums() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?slovak-sums/3/3/eyJudW1iZXJzIjpbMSwyXSwiY2VsbHMiOltbbnVsbCxudWxsLHsic3VtIjozLCJjb3VudCI6Mn1dLFtudWxsLHsic3VtIjo2LCJjb3VudCI6NH0sbnVsbF0sW3sic3VtIjozLCJjb3VudCI6Mn0sbnVsbCxudWxsXV19",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_native_slovak_sums() {
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?slovak-sums/5/5/3/1n-28i-26g0m-1cg");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_native_slovak_sums_8x8() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?slovak-sums/8/8/4/g-16o-11o-30o-35-3ao-4fo-3bo-16g",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+    }
+
+    #[test]
+    fn solve_problem_does_not_overlay_slovak_sums_clues() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?slovak-sums/8/8/4/g-16o-11o-30o-35-3ao-4fo-3bo-16g",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert!(!response.to_string().contains("#cccccc"));
+    }
 }
