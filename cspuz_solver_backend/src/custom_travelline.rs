@@ -996,20 +996,29 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 3 => {
                     solver.add_expr(&passed);
                     solver.add_expr(straight.clone());
-                    let mut cands = vec![];
-                    for (side, through_pearl) in [
-                        (Side::Up, vertical.clone()),
-                        (Side::Down, vertical.clone()),
-                        (Side::Left, horizontal.clone()),
-                        (Side::Right, horizontal.clone()),
-                    ] {
+                    let mut vertical_cands = vec![];
+                    for side in [Side::Up, Side::Down] {
                         if let Some((ny, nx)) = neighbor_cell(y, x, rows, cols, side) {
-                            cands.push(
-                                through_pearl & cell_curve_expr(is_line, problem, ny, nx),
-                            );
+                            vertical_cands.push(cell_curve_expr(is_line, problem, ny, nx));
                         }
                     }
-                    solver.add_expr(cspuz_rs::solver::any(cands));
+                    let mut horizontal_cands = vec![];
+                    for side in [Side::Left, Side::Right] {
+                        if let Some((ny, nx)) = neighbor_cell(y, x, rows, cols, side) {
+                            horizontal_cands.push(cell_curve_expr(is_line, problem, ny, nx));
+                        }
+                    }
+                    let vertical_ok =
+                        vertical.clone() & cspuz_rs::solver::any(vertical_cands);
+                    let horizontal_ok =
+                        horizontal.clone() & cspuz_rs::solver::any(horizontal_cands);
+                    // A crossed ice cell contains two independent straight passages.
+                    solver.add_expr(
+                        cross
+                            .clone()
+                            .imp(vertical_ok.clone() & horizontal_ok.clone()),
+                    );
+                    solver.add_expr((!cross).imp(vertical_ok | horizontal_ok));
                 }
                 4 => {
                     solver.add_expr(&passed);

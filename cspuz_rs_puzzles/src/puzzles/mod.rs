@@ -67,6 +67,7 @@ pub mod lits;
 pub mod lohkous;
 pub mod loop_special;
 pub mod magic_snail;
+pub mod magic_summer;
 pub mod masyu;
 pub mod milktea;
 pub mod moonsun;
