@@ -20,6 +20,13 @@ struct DirectedClue {
     value: i32,
 }
 
+#[derive(Clone, Copy)]
+struct BoundaryArrow {
+    cell: usize,
+    side: Side,
+    boundary_side: Option<Side>,
+}
+
 pub struct TravelLineProblem {
     rows: usize,
     cols: usize,
@@ -44,6 +51,7 @@ pub struct TravelLineProblem {
     border_h: Vec<Vec<bool>>,
     border_v: Vec<Vec<bool>>,
     directed: Vec<Vec<Option<DirectedClue>>>,
+    boundary_arrows: Vec<BoundaryArrow>,
     required_h: Vec<Vec<bool>>,
     required_v: Vec<Vec<bool>>,
     forced_h: Vec<Vec<i32>>,
@@ -131,6 +139,63 @@ fn parse_directed_grid(
     Ok(ret)
 }
 
+fn parse_boundary_arrows(
+    src: &json::JsonValue,
+    rows: usize,
+    cols: usize,
+) -> Result<Vec<BoundaryArrow>, &'static str> {
+    if src.is_null() {
+        return Ok(vec![]);
+    }
+    if !src.is_array() {
+        return Err("invalid boundary arrow list");
+    }
+    let mut ret = vec![];
+    for item in src.members() {
+        if !item.is_object() {
+            return Err("invalid boundary arrow entry");
+        }
+        let cell = item["cell"]
+            .as_usize()
+            .ok_or("invalid boundary arrow cell")?;
+        if cell >= rows * cols {
+            return Err("boundary arrow cell out of range");
+        }
+        let side = parse_side(
+            item["side"]
+                .as_str()
+                .ok_or("invalid boundary arrow side")?,
+        )
+        .ok_or("invalid boundary arrow side")?;
+        let boundary_side = if !item.has_key("boundarySide") {
+            let y = cell / cols;
+            let x = cell % cols;
+            Some(match side {
+                Side::Up | Side::Down if y == 0 => Side::Up,
+                Side::Up | Side::Down if y + 1 == rows => Side::Down,
+                Side::Left | Side::Right if x == 0 => Side::Left,
+                Side::Left | Side::Right if x + 1 == cols => Side::Right,
+                _ => return Err("boundary arrow boundary side missing"),
+            })
+        } else if item["boundarySide"].is_null() {
+            None
+        } else {
+            Some(parse_side(
+                item["boundarySide"]
+                    .as_str()
+                    .ok_or("invalid boundary arrow boundary side")?,
+            )
+            .ok_or("invalid boundary arrow boundary side")?)
+        };
+        ret.push(BoundaryArrow {
+            cell,
+            side,
+            boundary_side,
+        });
+    }
+    Ok(ret)
+}
+
 fn parse_optional_state_grid(
     src: &json::JsonValue,
     rows: usize,
@@ -205,6 +270,35 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
     }
     if goal_outer_side.is_none() && goal_dir.is_none() {
         return Err("travelline goal endpoint missing");
+    }
+
+    let boundary_arrows = parse_boundary_arrows(&root["boundaryArrows"], rows, cols)?;
+    for arrow in &boundary_arrows {
+        let y = arrow.cell / cols;
+        let x = arrow.cell % cols;
+        if let Some(boundary_side) = arrow.boundary_side {
+            let on_boundary = match boundary_side {
+                Side::Up => y == 0,
+                Side::Down => y + 1 == rows,
+                Side::Left => x == 0,
+                Side::Right => x + 1 == cols,
+            };
+            let direction_matches_boundary = match boundary_side {
+                Side::Up | Side::Down => matches!(arrow.side, Side::Up | Side::Down),
+                Side::Left | Side::Right => matches!(arrow.side, Side::Left | Side::Right),
+            };
+            let has_inner_cell = match boundary_side {
+                Side::Up => y + 1 < rows,
+                Side::Down => y > 0,
+                Side::Left => x + 1 < cols,
+                Side::Right => x > 0,
+            };
+            if !on_boundary || !direction_matches_boundary || !has_inner_cell {
+                return Err("travelline boundary arrow is not on board boundary");
+            }
+        } else if neighbor_cell(y, x, rows, cols, arrow.side).is_none() {
+            return Err("travelline internal arrow has no adjacent cell");
+        }
     }
 
     Ok(TravelLineProblem {
@@ -291,6 +385,7 @@ pub fn deserialize_problem(payload: &str) -> Result<TravelLineProblem, &'static 
         border_h: parse_optional_bool_grid(&root["borderH"], rows, cols.saturating_sub(1))?,
         border_v: parse_optional_bool_grid(&root["borderV"], rows.saturating_sub(1), cols)?,
         directed: parse_directed_grid(&root["directed"], rows, cols)?,
+        boundary_arrows,
         required_h: parse_bool_grid(&root["requiredH"], rows, cols.saturating_sub(1))?,
         required_v: parse_bool_grid(&root["requiredV"], rows.saturating_sub(1), cols)?,
         forced_h: parse_optional_state_grid(&root["forcedH"], rows, cols.saturating_sub(1))?,
@@ -320,6 +415,15 @@ fn neighbor_cell(
 }
 
 fn opposite_side(side: Side) -> Side {
+    match side {
+        Side::Up => Side::Down,
+        Side::Down => Side::Up,
+        Side::Left => Side::Right,
+        Side::Right => Side::Left,
+    }
+}
+
+fn boundary_arrow_inner_side(side: Side) -> Side {
     match side {
         Side::Up => Side::Down,
         Side::Down => Side::Up,
@@ -878,6 +982,42 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
                 }
             }
 
+            for arrow in problem
+                .boundary_arrows
+                .iter()
+                .filter(|arrow| arrow.cell == idx)
+            {
+                let inner_side = arrow
+                    .boundary_side
+                    .map(boundary_arrow_inner_side)
+                    .unwrap_or(arrow.side);
+                solver.add_expr(passed.expr());
+                solver.add_expr(problem_side_expr(is_line, problem, y, x, inner_side));
+                if let Some(line_dir) = &line_dir {
+                    let direction = match inner_side {
+                        Side::Up => line_dir.vertical.at((y - 1, x)),
+                        Side::Down => line_dir.vertical.at((y, x)),
+                        Side::Left => line_dir.horizontal.at((y, x - 1)),
+                        Side::Right => line_dir.horizontal.at((y, x)),
+                    };
+                    if arrow.boundary_side.is_some() {
+                        if matches!(arrow.side, Side::Down | Side::Right) {
+                            solver.add_expr(direction);
+                        } else {
+                            solver.add_expr(!direction);
+                        }
+                    } else {
+                        let outbound = match arrow.side {
+                            Side::Up => outbound_up.clone(),
+                            Side::Down => outbound_down.clone(),
+                            Side::Left => outbound_left.clone(),
+                            Side::Right => outbound_right.clone(),
+                        };
+                        solver.add_expr(outbound);
+                    }
+                }
+            }
+
             if problem.ice[y][x] || problem.cwfloor[y][x] {
                 if (y == 0 || y + 1 == rows || x == 0 || x + 1 == cols)
                     && !endpoint_has_outer_connector(problem, idx)
@@ -1336,6 +1476,66 @@ pub fn solve(problem: &TravelLineProblem) -> Result<Board, &'static str> {
 mod tests {
     use super::*;
 
+    fn boundary_arrow_payload(side: &str) -> String {
+        format!(
+            r#"{{
+                "rows": 2,
+                "cols": 2,
+                "start": 0,
+                "goal": 1,
+                "startSide": "up",
+                "goalSide": "up",
+                "bars": [[false,false],[false,false]],
+                "ice": [[false,false],[false,false]],
+                "cwfloor": [[false,false],[false,false]],
+                "noadj": [[false,false],[false,false]],
+                "notouch": [[false,false],[false,false]],
+                "sloop": [[false,false],[false,false]],
+                "specials": [[-1,-1],[-1,-1]],
+                "order": [[-1,-1],[-1,-1]],
+                "divide": [[0,0,0],[0,0,0],[0,0,0]],
+                "slither": [[-1,-1,-1],[-1,-1,-1],[-1,-1,-1]],
+                "countryH": [[false],[false]],
+                "countryV": [[false,false]],
+                "directed": [[null,null],[null,null]],
+                "requiredH": [[false],[false]],
+                "requiredV": [[false,false]],
+                "boundaryArrows": [{{"cell":0,"side":"{}","boundarySide":"up"}}]
+            }}"#,
+            side
+        )
+    }
+
+    fn internal_boundary_arrow_payload(cell: usize, side: &str) -> String {
+        format!(
+            r#"{{
+                "rows": 1,
+                "cols": 2,
+                "start": 0,
+                "goal": 1,
+                "startSide": "left",
+                "goalSide": "right",
+                "bars": [[false,false]],
+                "ice": [[false,false]],
+                "cwfloor": [[false,false]],
+                "noadj": [[false,false]],
+                "notouch": [[false,false]],
+                "sloop": [[false,false]],
+                "specials": [[-1,-1]],
+                "order": [[-1,-1]],
+                "divide": [[0,0,0],[0,0,0]],
+                "slither": [[-1,-1,-1],[-1,-1,-1]],
+                "countryH": [[false]],
+                "countryV": [],
+                "directed": [[null,null]],
+                "requiredH": [[false]],
+                "requiredV": [],
+                "boundaryArrows": [{{"cell":{},"side":"{}","boundarySide":null}}]
+            }}"#,
+            cell, side
+        )
+    }
+
     #[test]
     fn test_travelline_backend_accepts_simple_open_path() {
         let payload = r#"{
@@ -1365,6 +1565,40 @@ mod tests {
         let problem = deserialize_problem(payload).expect("payload should deserialize");
         let board = solve(&problem);
         assert!(board.is_ok(), "simple travelline backend puzzle should solve");
+    }
+
+    #[test]
+    fn test_travelline_backend_respects_boundary_arrow_direction() {
+        let inward = boundary_arrow_payload("down");
+        let problem = deserialize_problem(&inward).expect("payload should deserialize");
+        assert!(
+            solve(&problem).is_ok(),
+            "an inward boundary arrow should allow the matching route"
+        );
+
+        let outward = boundary_arrow_payload("up");
+        let problem = deserialize_problem(&outward).expect("payload should deserialize");
+        assert!(
+            solve(&problem).is_err(),
+            "a boundary arrow pointing against the route should be unsatisfiable"
+        );
+    }
+
+    #[test]
+    fn test_travelline_backend_respects_internal_boundary_arrow_direction() {
+        let inward = internal_boundary_arrow_payload(0, "right");
+        let problem = deserialize_problem(&inward).expect("payload should deserialize");
+        assert!(
+            solve(&problem).is_ok(),
+            "an internal arrow matching the route direction should allow the route"
+        );
+
+        let outward = internal_boundary_arrow_payload(1, "left");
+        let problem = deserialize_problem(&outward).expect("payload should deserialize");
+        assert!(
+            solve(&problem).is_err(),
+            "an internal arrow against the route direction should be unsatisfiable"
+        );
     }
 
     #[test]
