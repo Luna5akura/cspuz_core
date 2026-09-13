@@ -45,6 +45,8 @@ pub fn solve_kakuro(clues: &[Vec<Option<KakuroClue>>]) -> Option<Vec<Vec<Option<
         if let Some(n) = clue {
             sum_all_different(&mut solver, cells, n, 1, 9, None)
         } else {
+            // A blank (rather than zero) clue still denotes a run whose
+            // digits must be distinct; only its sum is unspecified.
             solver.all_different(&cells);
             cells.len() <= 9
         }
@@ -354,5 +356,19 @@ mod tests {
         let problem = problem_for_tests();
         let url = "https://puzz.link/p?kakuro/6/5/Dclh4t9fl3-p-gl-alJeC3BgG";
         util::tests::serializer_test(problem, url, serialize_problem, deserialize_problem);
+    }
+
+    #[test]
+    fn test_kakuro_native_zero_length_clues() {
+        // Native PuzzLink Kakuro URLs can contain explicit zero clues.  A
+        // zero-length run (no cells before the next clue) is valid and must
+        // simply be skipped by the solver.
+        let url = "https://puzz.link/p?kakuro/5/5/48la0.na0lh3l0Bn.0cl.c4a3";
+        let problem = deserialize_problem(url).expect("valid native Kakuro URL");
+        assert!(problem.iter().flatten().any(|clue| {
+            clue.map(|clue| clue.down == Some(0) || clue.right == Some(0))
+                .unwrap_or(false)
+        }));
+        assert!(solve_kakuro(&problem).is_some());
     }
 }

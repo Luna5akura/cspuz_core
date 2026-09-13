@@ -220,6 +220,83 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_kakuro_without_synthetic_frame() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?kakuro/6/5/Dclh4t9fl3-p-gl-alJeC3BgG",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+
+        let board = &response["description"];
+        // The URL's clue matrix contains a synthetic top row/left column;
+        // those are not playable cells in pzpr and must not be exposed in
+        // the solver description.
+        assert_eq!(board["height"].as_usize(), Some(5));
+        assert_eq!(board["width"].as_usize(), Some(6));
+
+        let data = board["data"].members().collect::<Vec<_>>();
+        assert!(!data.is_empty());
+        assert!(data.iter().all(|entry| entry["color"].as_str() == Some("green")));
+        assert!(data.iter().any(|entry| {
+            entry["x"].as_usize() == Some(3)
+                && entry["y"].as_usize() == Some(1)
+                && entry["item"]["data"].as_str() == Some("3")
+        }));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_neighbors() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?neighbor/9/9/............3.......2.......1...3.......2.......1...3.......2.......1............/111111101001110001011110001110111111110000101101111001100001111110101001000110000",
+        );
+        let response = json::parse(&response).unwrap();
+
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        let board = &response["description"];
+        assert_eq!(board["height"].as_usize(), Some(9));
+        assert_eq!(board["width"].as_usize(), Some(9));
+
+        let data = board["data"].members().collect::<Vec<_>>();
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("black") && entry["item"].as_str() == Some("square")
+        }));
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("black")
+                && entry["item"]["kind"].as_str() == Some("text")
+        }));
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("green")
+                && entry["item"]["kind"].as_str() == Some("text")
+        }));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_sky_neighbors() {
+        // Sky-neighbors uses the published Round 4 format: a 9x9 inner
+        // Neighbors grid followed by four visibility-count sides.  Keep this
+        // at the dispatch boundary so aliases, URL decoding, and the
+        // outer-grid board representation are covered together.
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?sky-neighbor/9/9/..........1.............................2.............................3........../.G..GG.GG;GGGG.G...;.G.G...GG;.G..G..G.;.GG....G.;.G.G....G;.G.GGGG.G;GGG....GG;.G.G.GGGG/212221313/212223121/213211232/221223121/010001111/010001111/011100010/001001111",
+        );
+        let response = json::parse(&response).unwrap();
+
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        let board = &response["description"];
+        assert_eq!(board["defaultStyle"].as_str(), Some("outer_grid"));
+        assert_eq!(board["height"].as_usize(), Some(11));
+        assert_eq!(board["width"].as_usize(), Some(11));
+
+        // Both inner answers and outside visibility counts are emitted as
+        // solver-derived (green) numbers when they are not givens.
+        let data = board["data"].members().collect::<Vec<_>>();
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("green")
+                && entry["item"]["kind"].as_str() == Some("text")
+        }));
+    }
+
+    #[test]
     fn solve_problem_does_not_overlay_slovak_sums_clues() {
         let response = solve_problem_json_from_bytes(
             b"https://puzz.link/p?slovak-sums/8/8/4/g-16o-11o-30o-35-3ao-4fo-3bo-16g",
