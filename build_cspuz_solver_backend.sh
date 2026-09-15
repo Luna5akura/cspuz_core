@@ -33,3 +33,11 @@ else
     find target/wasm32-unknown-emscripten/${MODE} -maxdepth 2 -type f | sort
     exit 1
 fi
+
+# Keep the browser's local solver copy in sync when this script is run
+# directly from cspuz_core (the dev command performs this copy itself, but a
+# manual rebuild otherwise leaves pzprjs/dist/wasm on the previous backend).
+if [ -d ../pzprjs/dist/wasm ]; then
+    cp build/cspuz_solver_backend/cspuz_solver_backend.js ../pzprjs/dist/wasm/cspuz_solver_backend.js
+    cp build/cspuz_solver_backend/cspuz_solver_backend.wasm ../pzprjs/dist/wasm/cspuz_solver_backend.wasm
+fi

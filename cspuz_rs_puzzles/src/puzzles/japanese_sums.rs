@@ -92,7 +92,7 @@ pub fn serialize_problem(problem: &Problem) -> Option<String> {
 }
 
 pub fn deserialize_problem(url: &str) -> Option<Problem> {
-    url_to_problem(combinator(), &["japanesesums"], url)
+    url_to_problem(combinator(), &["japanesesums", "japanesesumswithzeroes"], url)
 }
 
 #[cfg(test)]

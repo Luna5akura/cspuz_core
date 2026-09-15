@@ -297,6 +297,32 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_wolves_and_sheep_fences() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?wolvesandsheepfences/5/5/2c5a2a5c2a136a3c6a3",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+        assert_eq!(response["description"]["height"].as_usize(), Some(5));
+        assert_eq!(response["description"]["width"].as_usize(), Some(5));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_shape_minesweeper() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?shapeminesweeper/4/4/................//t",
+        );
+        let response = json::parse(&response).unwrap();
+        // The empty-clue board with the standard bank is intentionally not
+        // necessarily solvable; this assertion verifies that the puzzle is
+        // decoded and dispatched instead of returning an unknown-type error.
+        assert_ne!(
+            response["description"].as_str(),
+            Some("unknown puzzle type")
+        );
+    }
+
+    #[test]
     fn solve_problem_does_not_overlay_slovak_sums_clues() {
         let response = solve_problem_json_from_bytes(
             b"https://puzz.link/p?slovak-sums/8/8/4/g-16o-11o-30o-35-3ao-4fo-3bo-16g",

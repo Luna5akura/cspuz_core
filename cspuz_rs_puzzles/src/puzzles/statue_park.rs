@@ -360,7 +360,7 @@ impl Combinator<Vec<Vec<bool>>> for PieceCombinator {
     }
 }
 
-struct PiecesCombinator;
+pub(crate) struct PiecesCombinator;
 
 impl Combinator<Vec<Vec<Vec<bool>>>> for PiecesCombinator {
     fn serialize(&self, ctx: &Context, input: &[Vec<Vec<Vec<bool>>>]) -> Option<(usize, Vec<u8>)> {
