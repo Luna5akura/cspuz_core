@@ -20,16 +20,13 @@ fn sky_neighbor_published_example_is_solvable() {
 
     let data = board["data"].members().collect::<Vec<_>>();
     assert!(data.iter().any(|entry| {
-        entry["color"].as_str() == Some("black")
-            && entry["item"].as_str() == Some("square")
+        entry["color"].as_str() == Some("black") && entry["item"].as_str() == Some("square")
     }));
     assert!(data.iter().any(|entry| {
-        entry["color"].as_str() == Some("black")
-            && entry["item"]["kind"].as_str() == Some("text")
+        entry["color"].as_str() == Some("black") && entry["item"]["kind"].as_str() == Some("text")
     }));
     assert!(data.iter().any(|entry| {
-        entry["color"].as_str() == Some("green")
-            && entry["item"]["kind"].as_str() == Some("text")
+        entry["color"].as_str() == Some("green") && entry["item"]["kind"].as_str() == Some("text")
     }));
 
     // The backend uses the 11x11 outer-grid coordinate space.  Every emitted

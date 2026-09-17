@@ -102,10 +102,7 @@ fn build_walkwalk_model(
 pub fn solve_walkwalk(
     borders: &graph::InnerGridEdges<Vec<Vec<bool>>>,
     clues: &[Vec<Option<i32>>],
-) -> Option<(
-    graph::BoolGridEdgesIrrefutableFacts,
-    Vec<Vec<Option<bool>>>,
-)> {
+) -> Option<(graph::BoolGridEdgesIrrefutableFacts, Vec<Vec<Option<bool>>>)> {
     let (solver, is_line, is_passed) = build_walkwalk_model(borders, clues);
 
     solver

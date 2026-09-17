@@ -136,11 +136,7 @@ pub fn serialize_problem(problem: &Problem) -> Option<String> {
 }
 
 pub fn deserialize_problem(url: &str) -> Option<Problem> {
-    let problem = url_to_problem(
-        combinator(),
-        &["neighbors", "neighbor"],
-        url,
-    )?;
+    let problem = url_to_problem(combinator(), &["neighbors", "neighbor"], url)?;
     valid_problem(&problem).then_some(problem)
 }
 

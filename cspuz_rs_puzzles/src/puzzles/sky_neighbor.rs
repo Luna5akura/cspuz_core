@@ -5,9 +5,7 @@
 //! value is the number of visible buildings when the corresponding row or
 //! column is viewed from that side.
 
-use cspuz_rs::serializer::{
-    problem_to_url_with_context, strip_prefix, Combinator, Context, Size,
-};
+use cspuz_rs::serializer::{problem_to_url_with_context, strip_prefix, Combinator, Context, Size};
 use cspuz_rs::solver::{all, count_true, Solver};
 
 pub const SKY_NEIGHBOR_SIZE: usize = 9;
@@ -23,8 +21,7 @@ pub struct Problem {
 }
 
 fn is_9x9<T>(grid: &[Vec<T>]) -> bool {
-    grid.len() == SKY_NEIGHBOR_SIZE
-        && grid.iter().all(|row| row.len() == SKY_NEIGHBOR_SIZE)
+    grid.len() == SKY_NEIGHBOR_SIZE && grid.iter().all(|row| row.len() == SKY_NEIGHBOR_SIZE)
 }
 
 fn valid_num(n: Option<i32>) -> bool {
@@ -36,7 +33,12 @@ fn valid_problem(problem: &Problem) -> bool {
         && problem.outer_givens.len() == OUTER_SIZE
         && is_9x9(&problem.inner_outlined)
         && problem.outer_outlined.len() == OUTER_SIZE
-        && problem.inner_givens.iter().flatten().copied().all(valid_num)
+        && problem
+            .inner_givens
+            .iter()
+            .flatten()
+            .copied()
+            .all(valid_num)
         && problem.outer_givens.iter().copied().all(valid_num)
 }
 
@@ -176,10 +178,10 @@ pub fn solve_sky_neighbor(problem: &Problem) -> Option<(Vec<Vec<Option<i32>>>, V
             let visible = &solver.bool_var_1d(SKY_NEIGHBOR_SIZE);
             for p in 0..SKY_NEIGHBOR_SIZE {
                 let (y, x) = match side {
-                    0 => (p, pos),       // top
-                    1 => (8 - p, pos),   // bottom
-                    2 => (pos, p),       // left
-                    3 => (pos, 8 - p),   // right
+                    0 => (p, pos),     // top
+                    1 => (8 - p, pos), // bottom
+                    2 => (pos, p),     // left
+                    3 => (pos, 8 - p), // right
                     _ => unreachable!(),
                 };
                 if p == 0 {
@@ -257,8 +259,13 @@ impl Combinator<Problem> for SkyNeighborCombinator {
     }
 
     fn deserialize(&self, _: &Context, input: &[u8]) -> Option<(usize, Vec<Problem>)> {
-        let expected = SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE + 1 + OUTER_SIZE + 1
-            + SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE + 1 + OUTER_SIZE;
+        let expected = SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE
+            + 1
+            + OUTER_SIZE
+            + 1
+            + SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE
+            + 1
+            + OUTER_SIZE;
         if input.len() < expected {
             return None;
         }
@@ -435,79 +442,79 @@ pub fn serialize_problem(problem: &Problem) -> Option<String> {
 }
 
 pub fn deserialize_problem(url: &str) -> Option<Problem> {
-	let body = percent_decode(strip_prefix(url)?);
-	let mut parts = body.split('/');
-	let kind = parts.next()?;
-	if ![
-		"skyneighbor",
-		"skyneighbors",
-		"sky-neighbor",
-		"sky-neighbors",
-		"skyneighbour",
-		"skyneighbours",
-		"sky-neighbour",
-		"sky-neighbours",
-	]
-	.contains(&kind)
-	{
-		return None;
-	}
-	// Sky-neighbors is deliberately fixed at 9x9.  Do not let the generic
-	// Size combinator silently accept another dimension and then index a
-	// differently shaped model.
-	if parts.next()?.parse::<usize>().ok()? != SKY_NEIGHBOR_SIZE
-		|| parts.next()?.parse::<usize>().ok()? != SKY_NEIGHBOR_SIZE
-	{
-		return None;
-	}
-	let payload = parts.collect::<Vec<_>>();
+    let body = percent_decode(strip_prefix(url)?);
+    let mut parts = body.split('/');
+    let kind = parts.next()?;
+    if ![
+        "skyneighbor",
+        "skyneighbors",
+        "sky-neighbor",
+        "sky-neighbors",
+        "skyneighbour",
+        "skyneighbours",
+        "sky-neighbour",
+        "sky-neighbours",
+    ]
+    .contains(&kind)
+    {
+        return None;
+    }
+    // Sky-neighbors is deliberately fixed at 9x9.  Do not let the generic
+    // Size combinator silently accept another dimension and then index a
+    // differently shaped model.
+    if parts.next()?.parse::<usize>().ok()? != SKY_NEIGHBOR_SIZE
+        || parts.next()?.parse::<usize>().ok()? != SKY_NEIGHBOR_SIZE
+    {
+        return None;
+    }
+    let payload = parts.collect::<Vec<_>>();
 
-	// The compact four-layer form is the native cspuz/pzpr representation:
-	// inner givens / outside values / inner gray / outside gray.
-	if payload.len() >= 4
-		&& compact_len(payload[0]) == SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE
-		&& compact_len(payload[1]) == OUTER_SIZE
-		&& compact_len(payload[2]) == SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE
-		&& compact_len(payload[3]) == OUTER_SIZE
-	{
-		let problem = Problem {
-			inner_givens: parse_grid(payload[0])?,
-			outer_givens: parse_side(payload[1], OUTER_SIZE)?,
-			inner_outlined: parse_gray_grid(payload[2])?,
-			outer_outlined: parse_gray_side(payload[3], OUTER_SIZE)?,
-		};
-		return valid_problem(&problem).then_some(problem);
-	}
+    // The compact four-layer form is the native cspuz/pzpr representation:
+    // inner givens / outside values / inner gray / outside gray.
+    if payload.len() >= 4
+        && compact_len(payload[0]) == SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE
+        && compact_len(payload[1]) == OUTER_SIZE
+        && compact_len(payload[2]) == SKY_NEIGHBOR_SIZE * SKY_NEIGHBOR_SIZE
+        && compact_len(payload[3]) == OUTER_SIZE
+    {
+        let problem = Problem {
+            inner_givens: parse_grid(payload[0])?,
+            outer_givens: parse_side(payload[1], OUTER_SIZE)?,
+            inner_outlined: parse_gray_grid(payload[2])?,
+            outer_outlined: parse_gray_side(payload[3], OUTER_SIZE)?,
+        };
+        return valid_problem(&problem).then_some(problem);
+    }
 
-	// Paper-puzzle imports commonly use six or ten payload layers:
-	// inner / inner-gray / top / bottom / left / right [/ four gray masks].
-	// Accept this form as well so links copied from the reference examples
-	// can be solved directly by the backend.
-	if payload.len() != 6 && payload.len() != 10 {
-		return None;
-	}
-	let inner_givens = parse_grid(payload[0])?;
-	let inner_outlined = parse_gray_grid(payload[1])?;
-	let mut outer_givens = Vec::with_capacity(OUTER_SIZE);
-	for side in &payload[2..6] {
-		outer_givens.extend(parse_side(side, SKY_NEIGHBOR_SIZE)?);
-	}
-	let outer_outlined = if payload.len() == 10 {
-		let mut result = Vec::with_capacity(OUTER_SIZE);
-		for side in &payload[6..10] {
-			result.extend(parse_gray_side(side, SKY_NEIGHBOR_SIZE)?);
-		}
-		result
-	} else {
-		vec![false; OUTER_SIZE]
-	};
-	let problem = Problem {
-		inner_givens,
-		outer_givens,
-		inner_outlined,
-		outer_outlined,
-	};
-	valid_problem(&problem).then_some(problem)
+    // Paper-puzzle imports commonly use six or ten payload layers:
+    // inner / inner-gray / top / bottom / left / right [/ four gray masks].
+    // Accept this form as well so links copied from the reference examples
+    // can be solved directly by the backend.
+    if payload.len() != 6 && payload.len() != 10 {
+        return None;
+    }
+    let inner_givens = parse_grid(payload[0])?;
+    let inner_outlined = parse_gray_grid(payload[1])?;
+    let mut outer_givens = Vec::with_capacity(OUTER_SIZE);
+    for side in &payload[2..6] {
+        outer_givens.extend(parse_side(side, SKY_NEIGHBOR_SIZE)?);
+    }
+    let outer_outlined = if payload.len() == 10 {
+        let mut result = Vec::with_capacity(OUTER_SIZE);
+        for side in &payload[6..10] {
+            result.extend(parse_gray_side(side, SKY_NEIGHBOR_SIZE)?);
+        }
+        result
+    } else {
+        vec![false; OUTER_SIZE]
+    };
+    let problem = Problem {
+        inner_givens,
+        outer_givens,
+        inner_outlined,
+        outer_outlined,
+    };
+    valid_problem(&problem).then_some(problem)
 }
 
 #[cfg(test)]
@@ -563,17 +570,20 @@ mod tests {
         assert_eq!(problem.inner_givens[1][1], Some(1));
         assert_eq!(problem.inner_givens[4][4], Some(2));
         assert_eq!(problem.inner_givens[7][7], Some(3));
-        assert_eq!(problem.outer_givens[..9], [
-            Some(2),
-            Some(1),
-            Some(2),
-            Some(2),
-            Some(2),
-            Some(1),
-            Some(3),
-            Some(1),
-            Some(3),
-        ]);
+        assert_eq!(
+            problem.outer_givens[..9],
+            [
+                Some(2),
+                Some(1),
+                Some(2),
+                Some(2),
+                Some(2),
+                Some(1),
+                Some(3),
+                Some(1),
+                Some(3),
+            ]
+        );
 
         let expected = [
             "232213131",

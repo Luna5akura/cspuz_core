@@ -186,9 +186,8 @@ mod tests {
 
     #[test]
     fn solve_problem_dispatches_domino_search() {
-        let response = solve_problem_json_from_bytes(
-            b"https://puzz.link/p?domino-search/4/3/000111021222",
-        );
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?domino-search/4/3/000111021222");
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));
     }
@@ -204,8 +203,9 @@ mod tests {
 
     #[test]
     fn solve_problem_dispatches_native_slovak_sums() {
-        let response =
-            solve_problem_json_from_bytes(b"https://puzz.link/p?slovak-sums/5/5/3/1n-28i-26g0m-1cg");
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?slovak-sums/5/5/3/1n-28i-26g0m-1cg",
+        );
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));
     }
@@ -236,7 +236,9 @@ mod tests {
 
         let data = board["data"].members().collect::<Vec<_>>();
         assert!(!data.is_empty());
-        assert!(data.iter().all(|entry| entry["color"].as_str() == Some("green")));
+        assert!(data
+            .iter()
+            .all(|entry| entry["color"].as_str() == Some("green")));
         assert!(data.iter().any(|entry| {
             entry["x"].as_usize() == Some(3)
                 && entry["y"].as_usize() == Some(1)
@@ -305,6 +307,22 @@ mod tests {
         assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
         assert_eq!(response["description"]["height"].as_usize(), Some(5));
         assert_eq!(response["description"]["width"].as_usize(), Some(5));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_fourwindswithparks() {
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?fourwindswithparks/3/3/0j2g1g");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+    }
+
+    #[test]
+    fn solve_problem_dispatches_japanese_arrows() {
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?japanese_arrows/3/3/42h");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
     }
 
     #[test]

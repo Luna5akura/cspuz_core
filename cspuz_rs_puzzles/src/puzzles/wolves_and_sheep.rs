@@ -163,10 +163,9 @@ mod tests {
 
     #[test]
     fn decode_pzpr_number10_marks() {
-        let (clues, marks) = deserialize_problem(
-            "https://puzz.link/p?wolvesandsheepfences/5/5/2c5a2a5c2a136a3c6a3",
-        )
-        .unwrap();
+        let (clues, marks) =
+            deserialize_problem("https://puzz.link/p?wolvesandsheepfences/5/5/2c5a2a5c2a136a3c6a3")
+                .unwrap();
         assert_eq!(clues[0], vec![Some(2), None, None, None, None]);
         assert_eq!(marks[0][4], Mark::Sheep);
         assert_eq!(marks[3][1], Mark::Wolf);

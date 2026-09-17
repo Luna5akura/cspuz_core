@@ -190,10 +190,9 @@ mod tests {
 
     #[test]
     fn zero_is_a_numeric_clue() {
-        let (clues, _) = deserialize_problem(
-            "https://puzz.link/p?shapeminesweeper/4/4/0...............//t",
-        )
-        .unwrap();
+        let (clues, _) =
+            deserialize_problem("https://puzz.link/p?shapeminesweeper/4/4/0...............//t")
+                .unwrap();
         assert_eq!(clues[0][0], Some(0));
     }
 }

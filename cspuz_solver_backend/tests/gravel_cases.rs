@@ -2,8 +2,7 @@ use cspuz_solver_backend::solve_problem_json_from_bytes;
 
 const USER_GRAVEL_URL: &[u8] = b"https://puzz.link/p?gravel/7/7/06000000060000000j2zi3z";
 const NON_UNIQUE_GRAVEL_URL: &[u8] = b"https://puzz.link/p?gravel/7/7/00000000000000000i2zzk";
-const NUMBERED_CLUE_GRAVEL_URL: &[u8] =
-    b"https://puzz.link/p?gravel/7/7/00000000000000000i2q3s4y";
+const NUMBERED_CLUE_GRAVEL_URL: &[u8] = b"https://puzz.link/p?gravel/7/7/00000000000000000i2q3s4y";
 
 #[test]
 fn gravel_one_cell_is_solvable() {
@@ -87,8 +86,7 @@ fn gravel_solver_overlay_does_not_cover_numbered_clues() {
             item["y"].as_usize() == Some(y)
                 && item["x"].as_usize() == Some(x)
                 && item["color"].as_str() == Some("green")
-                && (item["item"].as_str() == Some("dot")
-                    || item["item"].as_str() == Some("block"))
+                && (item["item"].as_str() == Some("dot") || item["item"].as_str() == Some("block"))
         }));
     }
 }

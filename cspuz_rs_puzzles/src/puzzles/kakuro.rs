@@ -195,7 +195,8 @@ pub fn serialize_problem(problem: &Problem) -> Option<String> {
 }
 
 pub fn deserialize_problem(url: &str) -> Option<Problem> {
-    let (intermediate_grid, rem_seq) = url_to_problem(combinator(), &["kakuro"], url)?;
+    let (intermediate_grid, rem_seq) =
+        url_to_problem(combinator(), &["kakuro", "consecutivekakuro"], url)?;
 
     let (h, w) = util::infer_shape(&intermediate_grid);
     let h = h + 1;
@@ -356,6 +357,12 @@ mod tests {
         let problem = problem_for_tests();
         let url = "https://puzz.link/p?kakuro/6/5/Dclh4t9fl3-p-gl-alJeC3BgG";
         util::tests::serializer_test(problem, url, serialize_problem, deserialize_problem);
+    }
+
+    #[test]
+    fn test_consecutivekakuro_alias_deserializes() {
+        let url = "https://puzz.link/p?consecutivekakuro/6/5/Dclh4t9fl3-p-gl-alJeC3BgG";
+        assert!(deserialize_problem(url).is_some());
     }
 
     #[test]

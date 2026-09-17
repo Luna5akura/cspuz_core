@@ -233,8 +233,16 @@ pub fn solve_gravel(problem: &Problem) -> Option<GravelAnswer> {
     let is_black_answer = facts.get(is_black);
     let borders_answer = facts.get(&white_border);
     let is_unique = is_black_answer.iter().flatten().all(Option::is_some)
-        && borders_answer.horizontal.iter().flatten().all(Option::is_some)
-        && borders_answer.vertical.iter().flatten().all(Option::is_some);
+        && borders_answer
+            .horizontal
+            .iter()
+            .flatten()
+            .all(Option::is_some)
+        && borders_answer
+            .vertical
+            .iter()
+            .flatten()
+            .all(Option::is_some);
 
     Some(GravelAnswer {
         is_black: is_black_answer,
@@ -273,9 +281,7 @@ fn constrain_white_border(
         }
     }
     solver.add_expr(
-        border.iff(
-            (is_black.at(c1) ^ is_black.at(c2)) | (both_white & !any_or_false(same_square)),
-        ),
+        border.iff((is_black.at(c1) ^ is_black.at(c2)) | (both_white & !any_or_false(same_square))),
     );
 }
 
