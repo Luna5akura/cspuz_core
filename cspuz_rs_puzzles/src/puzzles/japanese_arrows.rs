@@ -1,9 +1,10 @@
 use crate::util;
 use cspuz_rs::solver::{count_true, Solver};
 
-/// A Japanese Arrows clue consists of an optional arrow direction and the
-/// optional number written in that cell.  The number in the answer is a
-/// separate value and is solved by `solve_japanese_arrows`.
+/// A Japanese Arrows cell consists of an arrow direction and an optional
+/// given number. `direction` remains optional here only so an unfinished
+/// pzpr editor URL can be decoded and round-tripped; every cell must have a
+/// direction before `solve_japanese_arrows` will accept the problem.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ArrowClue {
     pub direction: Option<i32>,
@@ -102,6 +103,8 @@ fn decode_cells(payload: &[u8], width: usize, height: usize) -> Option<Problem> 
 }
 
 fn encode_cell(clue: ArrowClue) -> Option<String> {
+    // Keep the encoder permissive so unfinished editor boards can still be
+    // round-tripped. `solve_japanese_arrows` performs the strict validation.
     let direction = clue.direction.unwrap_or(0);
     if !(0..=8).contains(&direction) {
         return None;
@@ -170,6 +173,16 @@ fn step(direction: i32) -> Option<(isize, isize)> {
 pub fn solve_japanese_arrows(clues: &Problem) -> Option<Vec<Vec<Option<i32>>>> {
     let (height, width) = util::infer_shape(clues);
     if height == 0 || width == 0 || clues.iter().any(|row| row.len() != width) {
+        return None;
+    }
+    // The competition rules give an arrow in every cell.  Missing arrows are
+    // not unconstrained cells; they mean that the encoded problem is
+    // incomplete and must not be solved as a different, weaker puzzle.
+    if clues
+        .iter()
+        .flatten()
+        .any(|clue| clue.direction.and_then(step).is_none())
+    {
         return None;
     }
     // A value is a distinct-count on a ray that excludes its own cell.  The
@@ -256,18 +269,17 @@ mod tests {
 
     #[test]
     fn solves_directional_distinct_count() {
-        let problem = vec![
-            vec![
-                ArrowClue {
-                    direction: Some(4),
-                    count: Some(2),
-                },
-                ArrowClue::default(),
-                ArrowClue::default(),
-            ],
-            vec![ArrowClue::default(); 3],
-            vec![ArrowClue::default(); 3],
-        ];
+        let directions = [[2, 2, 2], [4, 2, 3], [1, 1, 1]];
+        let problem = (0..3)
+            .map(|y| {
+                (0..3)
+                    .map(|x| ArrowClue {
+                        direction: Some(directions[y][x]),
+                        count: if (y, x) == (0, 0) { Some(2) } else { None },
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
         let answer = solve_japanese_arrows(&problem).unwrap();
         assert_eq!(answer.len(), 3);
         assert_eq!(answer[0].len(), 3);
@@ -281,9 +293,21 @@ mod tests {
                     direction: Some(1),
                     count: Some(2),
                 },
-                ArrowClue::default(),
+                ArrowClue {
+                    direction: Some(2),
+                    count: None,
+                },
             ],
-            vec![ArrowClue::default(); 2],
+            vec![
+                ArrowClue {
+                    direction: Some(4),
+                    count: None,
+                },
+                ArrowClue {
+                    direction: Some(3),
+                    count: None,
+                },
+            ],
         ];
         let url = serialize_problem(&problem).unwrap();
         assert_eq!(deserialize_problem(&url), Some(problem));
@@ -304,7 +328,10 @@ mod tests {
                 direction: Some(4),
                 count: None,
             },
-            ArrowClue::default(),
+            ArrowClue {
+                direction: Some(3),
+                count: None,
+            },
         ]];
         let answer = solve_japanese_arrows(&problem).unwrap();
         assert_eq!(answer[0][0], Some(1));
@@ -312,7 +339,12 @@ mod tests {
 
     #[test]
     fn allows_five_on_a_six_cell_ray() {
-        let mut row = vec![ArrowClue::default(); 6];
+        let mut row = (0..6)
+            .map(|x| ArrowClue {
+                direction: Some(if x < 5 { 4 } else { 3 }),
+                count: None,
+            })
+            .collect::<Vec<_>>();
         row[0] = ArrowClue {
             direction: Some(4),
             count: Some(5),
@@ -328,10 +360,28 @@ mod tests {
                 direction: Some(8),
                 count: None,
             },
-            ArrowClue::default(),
+            ArrowClue {
+                direction: Some(3),
+                count: None,
+            },
         ]];
         let url = serialize_problem(&problem).unwrap();
         assert_eq!(deserialize_problem(&url), Some(problem));
+    }
+
+    #[test]
+    fn rejects_a_problem_with_a_missing_arrow() {
+        let problem = vec![vec![
+            ArrowClue {
+                direction: Some(4),
+                count: Some(1),
+            },
+            ArrowClue {
+                direction: None,
+                count: Some(1),
+            },
+        ]];
+        assert_eq!(solve_japanese_arrows(&problem), None);
     }
 
     #[test]

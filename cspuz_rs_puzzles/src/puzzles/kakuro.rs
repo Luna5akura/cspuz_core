@@ -1,10 +1,10 @@
 use crate::util;
 use cspuz_rs::complex_constraints::sum_all_different;
 use cspuz_rs::serializer::{
-    problem_to_url_with_context, url_to_problem, Choice, Combinator, Context, ContextBasedGrid,
-    Dict, Optionalize, Size, Spaces, Tuple2, UnlimitedSeq,
+    problem_to_url_with_context, strip_prefix, url_to_problem, Choice, Combinator, Context,
+    ContextBasedGrid, Dict, Optionalize, Size, Spaces, Tuple2, UnlimitedSeq,
 };
-use cspuz_rs::solver::{IntVarArray1D, Solver};
+use cspuz_rs::solver::{IntVar, IntVarArray1D, Solver};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KakuroClue {
@@ -13,6 +13,22 @@ pub struct KakuroClue {
 }
 
 pub fn solve_kakuro(clues: &[Vec<Option<KakuroClue>>]) -> Option<Vec<Vec<Option<i32>>>> {
+    solve_kakuro_with_bars(clues, None)
+}
+
+fn add_consecutive_constraint(solver: &mut Solver, a: IntVar, b: IntVar, consecutive: bool) {
+    let diff = a - b;
+    if consecutive {
+        solver.add_expr(diff.eq(1) | diff.eq(-1));
+    } else {
+        solver.add_expr(diff.ne(1) & diff.ne(-1));
+    }
+}
+
+pub fn solve_kakuro_with_bars(
+    clues: &[Vec<Option<KakuroClue>>],
+    bars: Option<&[Vec<u8>]>,
+) -> Option<Vec<Vec<Option<i32>>>> {
     let (h, w) = util::infer_shape(clues);
 
     let mut solver = Solver::new();
@@ -75,6 +91,36 @@ pub fn solve_kakuro(clues: &[Vec<Option<KakuroClue>>]) -> Option<Vec<Vec<Option<
                     if !add_constraints(numbers.slice_fixed_y((y, (x + 1)..x2)), clue.right) {
                         return None;
                     }
+                }
+            }
+        }
+    }
+
+    if let Some(bars) = bars {
+        if bars.len() != h - 1 || bars.iter().any(|row| row.len() != w - 1) {
+            return None;
+        }
+        for y in 1..h {
+            for x in 1..w {
+                if clues[y][x].is_some() {
+                    continue;
+                }
+                let cell_bars = bars[y - 1][x - 1];
+                if x + 1 < w && clues[y][x + 1].is_none() {
+                    add_consecutive_constraint(
+                        &mut solver,
+                        numbers.at((y, x)),
+                        numbers.at((y, x + 1)),
+                        cell_bars & 2 != 0,
+                    );
+                }
+                if y + 1 < h && clues[y + 1][x].is_none() {
+                    add_consecutive_constraint(
+                        &mut solver,
+                        numbers.at((y, x)),
+                        numbers.at((y + 1, x)),
+                        cell_bars & 1 != 0,
+                    );
                 }
             }
         }
@@ -194,10 +240,12 @@ pub fn serialize_problem(problem: &Problem) -> Option<String> {
     )
 }
 
-pub fn deserialize_problem(url: &str) -> Option<Problem> {
-    let (intermediate_grid, rem_seq) =
-        url_to_problem(combinator(), &["kakuro", "consecutivekakuro"], url)?;
+type IntermediateGrid = Vec<Vec<Option<(Option<i32>, Option<i32>)>>>;
 
+fn problem_from_intermediate(
+    intermediate_grid: IntermediateGrid,
+    rem_seq: Vec<Option<i32>>,
+) -> Option<Problem> {
     let (h, w) = util::infer_shape(&intermediate_grid);
     let h = h + 1;
     let w = w + 1;
@@ -250,6 +298,130 @@ pub fn deserialize_problem(url: &str) -> Option<Problem> {
     }
 
     Some(ret)
+}
+
+pub fn deserialize_problem(url: &str) -> Option<Problem> {
+    let (intermediate_grid, rem_seq) =
+        url_to_problem(combinator(), &["kakuro", "consecutivekakuro"], url)?;
+    problem_from_intermediate(intermediate_grid, rem_seq)
+}
+
+fn decode_kakuro_num(ca: u8) -> Option<i32> {
+    match ca {
+        b'0'..=b'9' => Some((ca - b'0') as i32),
+        b'a'..=b'j' => Some((ca - b'a' + 10) as i32),
+        b'A'..=b'Z' => Some((ca - b'A' + 20) as i32),
+        _ => None,
+    }
+}
+
+fn hex_digit(ca: u8) -> Option<i32> {
+    match ca {
+        b'0'..=b'9' => Some((ca - b'0') as i32),
+        b'a'..=b'f' => Some((ca - b'a' + 10) as i32),
+        b'A'..=b'F' => Some((ca - b'A' + 10) as i32),
+        _ => None,
+    }
+}
+
+/// Decode the pzprjs body of a Kakuro URL: the row-major cell stream, the
+/// outside clue characters and, for Consecutive Kakuro, the trailing
+/// white-bar segment.
+///
+/// `cols` and `rows` are the playable grid dimensions from the URL header.
+/// The returned grid uses the serializer's intermediate representation:
+/// `Some((down, right))` for a clue cell, `None` for a white cell.
+fn decode_kakuro_body(
+    body: &[u8],
+    rows: usize,
+    cols: usize,
+) -> Option<(IntermediateGrid, Vec<Option<i32>>, &[u8])> {
+    let total = rows.checked_mul(cols)?;
+    let mut grid = vec![vec![None; cols]; rows];
+    let mut pos = 0usize;
+    let mut cell = 0usize;
+
+    while pos < body.len() && cell < total {
+        let ca = body[pos];
+        if (b'k'..=b'z').contains(&ca) {
+            // Run of white cells; `k` skips one cell and `z` skips sixteen.
+            cell += (ca - b'k') as usize + 1;
+            pos += 1;
+            continue;
+        }
+
+        let (down, right, consumed) = if ca == b'.' {
+            (None, None, 1)
+        } else {
+            let down = decode_kakuro_num(ca);
+            let right = body.get(pos + 1).copied().and_then(decode_kakuro_num);
+            (down, right, 2)
+        };
+        grid[cell / cols][cell % cols] = Some((down, right));
+        cell += 1;
+        pos += consumed;
+    }
+
+    let mut rem_seq = vec![];
+    for x in 0..cols {
+        if grid[0][x].is_none() {
+            rem_seq.push(decode_kakuro_num(*body.get(pos)?));
+            pos += 1;
+        }
+    }
+    for y in 0..rows {
+        if grid[y][0].is_none() {
+            rem_seq.push(decode_kakuro_num(*body.get(pos)?));
+            pos += 1;
+        }
+    }
+
+    Some((grid, rem_seq, &body[pos..]))
+}
+
+/// Decode the consecutive-bar segment of a Consecutive Kakuro URL.  Each
+/// playable cell contributes one pzpr number16 value whose bit 1 (value 2)
+/// marks the bar on its right border and bit 0 (value 1) the bar on its
+/// bottom border.  The editor only emits the values 0..3 as a single
+/// hexadecimal digit per cell, but run-length skip letters are accepted as
+/// well for compatibility with the generic pzpr decoder.
+fn decode_consecutive_bars(body: &[u8], rows: usize, cols: usize) -> Vec<Vec<u8>> {
+    let total = rows * cols;
+    let mut bars = vec![vec![0u8; cols]; rows];
+    let mut index = 0usize;
+    let mut pos = 0usize;
+    while index < total && pos < body.len() {
+        let ca = body[pos];
+        if let Some(value) = hex_digit(ca) {
+            bars[index / cols][index % cols] = value as u8;
+            index += 1;
+        } else if (b'g'..=b'z').contains(&ca) {
+            index += (ca - b'g') as usize + 1;
+        }
+        pos += 1;
+    }
+    bars
+}
+
+pub fn deserialize_consecutive_problem(url: &str) -> Option<(Problem, Vec<Vec<u8>>)> {
+    let serialized = strip_prefix(url)?;
+    let mut parts = serialized.split('/');
+    if parts.next()? != "consecutivekakuro" {
+        return None;
+    }
+    let cols: usize = parts.next()?.parse().ok()?;
+    let rows: usize = parts.next()?.parse().ok()?;
+    let body = parts.next().unwrap_or("").as_bytes();
+
+    if cols == 0 || rows == 0 {
+        return None;
+    }
+
+    let (intermediate_grid, rem_seq, remaining) = decode_kakuro_body(body, rows, cols)?;
+    let problem = problem_from_intermediate(intermediate_grid, rem_seq)?;
+    let bars = decode_consecutive_bars(remaining, rows, cols);
+
+    Some((problem, bars))
 }
 
 #[cfg(test)]
@@ -377,5 +549,130 @@ mod tests {
                 .unwrap_or(false)
         }));
         assert!(solve_kakuro(&problem).is_some());
+    }
+
+    #[test]
+    fn test_consecutivekakuro_parses_bars() {
+        // Clue cell at the top-left followed by a fully white 3x3 board,
+        // with bars on the right and bottom borders of the clue cell.
+        let url = "https://puzz.link/p?consecutivekakuro/3/3/34r----300000000";
+        let (problem, bars) = deserialize_consecutive_problem(url).unwrap();
+
+        assert_eq!(problem.len(), 4);
+        assert!(problem.iter().all(|row| row.len() == 4));
+        assert_eq!(
+            problem[1][1].map(|c| (c.down, c.right)),
+            Some((Some(3), Some(4)))
+        );
+
+        assert_eq!(bars.len(), 3);
+        assert!(bars.iter().all(|row| row.len() == 3));
+        assert_eq!(bars[0][0], 3);
+        assert_eq!(bars[0][1], 0);
+        assert_eq!(bars[1][0], 0);
+        assert_eq!(bars[1][1], 0);
+    }
+
+    #[test]
+    fn test_consecutivekakuro_solver_enforces_bars() {
+        // 2x2 all-white board:
+        //   a b  (row sum 4)     a b = 1 3
+        //   c d  (row sum 6)     c d = 2 4
+        // col sums 3 and 7.  The unique plain solution is shown on the right;
+        // bars mark the consecutive pairs a-c and b-d.
+        let clues = vec![
+            vec![
+                Some(KakuroClue {
+                    down: None,
+                    right: None,
+                }),
+                Some(KakuroClue {
+                    down: Some(3),
+                    right: None,
+                }),
+                Some(KakuroClue {
+                    down: Some(7),
+                    right: None,
+                }),
+            ],
+            vec![
+                Some(KakuroClue {
+                    down: None,
+                    right: Some(4),
+                }),
+                None,
+                None,
+            ],
+            vec![
+                Some(KakuroClue {
+                    down: None,
+                    right: Some(6),
+                }),
+                None,
+                None,
+            ],
+        ];
+        let expected = crate::util::tests::to_option_2d([[0, 0, 0], [0, 1, 3], [0, 2, 4]]);
+
+        assert_eq!(solve_kakuro(&clues), Some(expected.clone()));
+
+        // The bars match the unique plain solution, so solving with bars
+        // keeps the same answer.
+        let bars = vec![vec![1, 1], vec![0, 0]];
+        assert_eq!(
+            solve_kakuro_with_bars(&clues, Some(&bars)),
+            Some(expected.clone())
+        );
+
+        // Requiring a bar between a and b (1 and 3 are not consecutive)
+        // makes the puzzle unsatisfiable.
+        let contradictory = vec![vec![3, 1], vec![0, 0]];
+        assert_eq!(solve_kakuro_with_bars(&clues, Some(&contradictory)), None);
+
+        // Removing the bar between a and c (1 and 2 are consecutive, so the
+        // pair must not be consecutive without a bar) is also unsolvable.
+        let contradictory = vec![vec![0, 1], vec![0, 0]];
+        assert_eq!(solve_kakuro_with_bars(&clues, Some(&contradictory)), None);
+    }
+
+    #[test]
+    fn test_consecutivekakuro_decodes_interior_clues_and_bars() {
+        // 4x4 board with clue cells at (0,0) and (1,1), produced by the pzpr
+        // editor.  The body exercises run-length letters (`n`, `t`) between
+        // clue cells plus the trailing 16-cell bar segment.
+        let url = "https://puzz.link/p?consecutivekakuro/4/4/67n98t------0220000002000000";
+        let (problem, bars) = deserialize_consecutive_problem(url).unwrap();
+
+        assert_eq!(problem.len(), 5);
+        assert!(problem.iter().all(|row| row.len() == 5));
+        assert_eq!(
+            problem[1][1].map(|c| (c.down, c.right)),
+            Some((Some(6), Some(7)))
+        );
+        assert_eq!(
+            problem[2][2].map(|c| (c.down, c.right)),
+            Some((Some(9), Some(8)))
+        );
+        assert_eq!(problem[1][2], None);
+
+        assert_eq!(bars.len(), 4);
+        assert_eq!(bars[0], vec![0, 2, 2, 0]);
+        assert_eq!(bars[2], vec![0, 2, 0, 0]);
+    }
+
+    #[test]
+    fn test_consecutivekakuro_end_to_end_url() {
+        // A URL produced by the pzpr editor for the 2x2 puzzle above:
+        // clue grid `n` (four white cells), outside clues 3/7 (down) and
+        // 4/6 (right), bars `1100` (a-c and b-d).
+        let url = "https://puzz.link/p?consecutivekakuro/2/2/n37461100";
+        let (problem, bars) = deserialize_consecutive_problem(url).unwrap();
+        assert_eq!(bars, vec![vec![1, 1], vec![0, 0]]);
+
+        let expected = crate::util::tests::to_option_2d([[0, 0, 0], [0, 1, 3], [0, 2, 4]]);
+        assert_eq!(
+            solve_kakuro_with_bars(&problem, Some(&bars)),
+            Some(expected)
+        );
     }
 }

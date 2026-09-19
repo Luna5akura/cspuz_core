@@ -21,20 +21,26 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                     2 => ItemKind::ArrowDown,
                     3 => ItemKind::ArrowLeft,
                     4 => ItemKind::ArrowRight,
-                    5 => ItemKind::Text("↖"),
-                    6 => ItemKind::Text("↗"),
-                    7 => ItemKind::Text("↙"),
-                    8 => ItemKind::Text("↘"),
+                    5 => ItemKind::ArrowUpLeft,
+                    6 => ItemKind::ArrowUpRight,
+                    7 => ItemKind::ArrowDownLeft,
+                    8 => ItemKind::ArrowDownRight,
                     _ => return Err("invalid clue"),
                 };
                 board.push(Item::cell(y, x, "black", kind));
             }
             if let Some(count) = clue.count {
-                board.push(Item::cell(y, x, "black", ItemKind::Num(count)));
+                // The arrow occupies the left side of the cell in this
+                // variety; keep the clue number on the right as in the
+                // printed competition puzzle.
+                board.push(Item::cell(y, x, "black", ItemKind::NumUpperRight(count)));
             }
             if clue.count.is_none() {
                 if let Some(n) = answer[y][x] {
-                    board.push(Item::cell(y, x, "green", ItemKind::Num(n)));
+                    // Japanese Arrows reserves the left side of each cell for
+                    // its arrow.  NumUpperRight is interpreted by the pzpr
+                    // variety as the right-side answer-number overlay.
+                    board.push(Item::cell(y, x, "green", ItemKind::NumUpperRight(n)));
                 }
             }
         }

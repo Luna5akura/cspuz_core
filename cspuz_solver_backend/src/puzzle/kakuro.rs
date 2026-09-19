@@ -1,10 +1,21 @@
 use crate::board::{Board, BoardKind, Item, ItemKind};
 use crate::uniqueness::is_unique;
+use cspuz_rs::serializer::url_to_puzzle_kind;
 use cspuz_rs_puzzles::puzzles::kakuro;
 
 pub fn solve(url: &str) -> Result<Board, &'static str> {
-    let problem = kakuro::deserialize_problem(url).ok_or("invalid url")?;
-    let answer: Vec<Vec<Option<i32>>> = kakuro::solve_kakuro(&problem).ok_or("no answer")?;
+    let is_consecutive = url_to_puzzle_kind(url).as_deref() == Some("consecutivekakuro");
+
+    let (problem, answer) = if is_consecutive {
+        let (problem, bars) = kakuro::deserialize_consecutive_problem(url).ok_or("invalid url")?;
+        let answer: Vec<Vec<Option<i32>>> =
+            kakuro::solve_kakuro_with_bars(&problem, Some(&bars)).ok_or("no answer")?;
+        (problem, answer)
+    } else {
+        let problem = kakuro::deserialize_problem(url).ok_or("invalid url")?;
+        let answer: Vec<Vec<Option<i32>>> = kakuro::solve_kakuro(&problem).ok_or("no answer")?;
+        (problem, answer)
+    };
 
     // `deserialize_problem` normally produces a rectangular matrix with a
     // one-cell synthetic frame.  Keep the boundary explicit here: this

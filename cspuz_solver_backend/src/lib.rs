@@ -247,6 +247,46 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_consecutive_kakuro_with_bars() {
+        // 2x2 board: row sums 4/6, column sums 3/7, bars between the two
+        // consecutive pairs (a-c and b-d).  The unique answer is
+        //   1 3
+        //   2 4
+        // which only holds when the white-bar constraints are enforced.
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?consecutivekakuro/2/2/n37461100");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+
+        let board = &response["description"];
+        assert_eq!(board["height"].as_usize(), Some(2));
+        assert_eq!(board["width"].as_usize(), Some(2));
+
+        let data = board["data"].members().collect::<Vec<_>>();
+        assert_eq!(data.len(), 4);
+        assert!(data.iter().any(|entry| {
+            entry["x"].as_usize() == Some(1)
+                && entry["y"].as_usize() == Some(1)
+                && entry["item"]["data"].as_str() == Some("1")
+        }));
+        assert!(data.iter().any(|entry| {
+            entry["x"].as_usize() == Some(3)
+                && entry["y"].as_usize() == Some(1)
+                && entry["item"]["data"].as_str() == Some("3")
+        }));
+        assert!(data.iter().any(|entry| {
+            entry["x"].as_usize() == Some(1)
+                && entry["y"].as_usize() == Some(3)
+                && entry["item"]["data"].as_str() == Some("2")
+        }));
+        assert!(data.iter().any(|entry| {
+            entry["x"].as_usize() == Some(3)
+                && entry["y"].as_usize() == Some(3)
+                && entry["item"]["data"].as_str() == Some("4")
+        }));
+    }
+
+    #[test]
     fn solve_problem_dispatches_neighbors() {
         let response = solve_problem_json_from_bytes(
             b"https://puzz.link/p?neighbor/9/9/............3.......2.......1...3.......2.......1...3.......2.......1............/111111101001110001011110001110111111110000101101111001100001111110101001000110000",
@@ -269,6 +309,73 @@ mod tests {
         assert!(data.iter().any(|entry| {
             entry["color"].as_str() == Some("green")
                 && entry["item"]["kind"].as_str() == Some("text")
+        }));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_pills() {
+        // WPF GP 2015 Round 7, puzzle 20.  The pill values appear in every
+        // covered cell; uncovered cells stay empty.
+        let problem = cspuz_rs_puzzles::puzzles::pills::PillsProblem {
+            dots: vec![
+                vec![4, 4, 4, 2, 2, 2, 2, 4, 4, 4],
+                vec![4, 2, 4, 1, 1, 1, 1, 4, 2, 4],
+                vec![4, 4, 4, 1, 0, 0, 1, 4, 4, 4],
+                vec![2, 1, 1, 1, 0, 0, 1, 1, 1, 2],
+                vec![2, 1, 0, 0, 0, 0, 0, 0, 1, 2],
+                vec![2, 1, 0, 0, 0, 0, 0, 0, 1, 2],
+                vec![2, 1, 1, 1, 0, 0, 1, 1, 1, 2],
+                vec![4, 4, 4, 1, 0, 0, 1, 4, 4, 4],
+                vec![4, 2, 4, 1, 1, 1, 1, 4, 2, 4],
+                vec![4, 4, 4, 2, 2, 2, 2, 4, 4, 4],
+            ],
+            row_clues: vec![
+                Some(8),
+                Some(5),
+                Some(4),
+                Some(1),
+                Some(3),
+                Some(1),
+                Some(4),
+                Some(14),
+                Some(13),
+                Some(2),
+            ],
+            col_clues: vec![
+                Some(4),
+                Some(8),
+                Some(17),
+                Some(1),
+                Some(1),
+                Some(2),
+                Some(7),
+                Some(5),
+                Some(8),
+                Some(2),
+            ],
+        };
+        let url = cspuz_rs_puzzles::puzzles::pills::serialize_problem(&problem).unwrap();
+        let response = solve_problem_json_from_bytes(url.as_bytes());
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+
+        let board = &response["description"];
+        assert_eq!(board["height"].as_usize(), Some(10));
+        assert_eq!(board["width"].as_usize(), Some(10));
+        assert_eq!(board["isUnique"].as_bool(), Some(true));
+
+        let data = board["data"].members().collect::<Vec<_>>();
+        // The value-10 pill occupies the top-left corner of row 8 (row index 7).
+        assert!(data.iter().any(|entry| {
+            entry["x"].as_usize() == Some(1)
+                && entry["y"].as_usize() == Some(17)
+                && entry["item"]["data"].as_str() == Some("10")
+        }));
+        // The value-4 pill occupies (6,9) in grid coordinates -> (13,19) on the board.
+        assert!(data.iter().any(|entry| {
+            entry["x"].as_usize() == Some(13)
+                && entry["y"].as_usize() == Some(19)
+                && entry["item"]["data"].as_str() == Some("4")
         }));
     }
 
@@ -319,10 +426,33 @@ mod tests {
 
     #[test]
     fn solve_problem_dispatches_japanese_arrows() {
-        let response =
-            solve_problem_json_from_bytes(b"https://puzz.link/p?japanese_arrows/3/3/42h");
+        // A legal Japanese Arrows board has an arrow in every cell.  This is
+        // a small all-given instance (all values are 1) that exercises the
+        // normal cardinal directions without relying on the old arrowless
+        // compatibility payload.
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?japanese_arrows/3/3/212121412131111111",
+        );
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+    }
+
+    #[test]
+    fn japanese_arrows_backend_preserves_diagonal_arrow_kinds() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?japanese_arrows/2/2/-8001-7001-6001-5001",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+        let data = response["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert!(data
+            .iter()
+            .any(|entry| { entry["item"].as_str() == Some("arrowUpLeft") }));
+        assert!(data
+            .iter()
+            .any(|entry| { entry["item"].as_str() == Some("arrowDownRight") }));
     }
 
     #[test]
