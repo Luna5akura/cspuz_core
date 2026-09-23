@@ -38,6 +38,7 @@ pub mod fillomino;
 pub mod firefly;
 pub mod firewalk;
 pub mod forestwalk;
+pub mod fourwinds;
 pub mod fourwindswithparks;
 pub mod geradeweg;
 pub mod gravel;

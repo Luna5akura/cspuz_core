@@ -425,6 +425,51 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_fourwinds() {
+        let response = solve_problem_json_from_bytes(b"https://puzz.link/p?fourwinds/3/3/04c00c02");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+        let data = response["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("green") && entry["item"].as_str() == Some("arrowRight")
+        }));
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("green") && entry["item"].as_str() == Some("arrowUp")
+        }));
+    }
+
+    #[test]
+    fn solve_problem_dispatches_japanese_sums_with_zeroes() {
+        // 1x2 with digits 0..1 and clues col0=[0], col1=[1], row0=[1].  The
+        // unique solution is (0,0)=0, (0,1)=1; the 0 is a real digit in this
+        // variant, not a shaded blank.  The plain Japanese Sums solver would
+        // report "no answer".
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?japanesesumswithzeroes/2/1/1/011");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+        let data = response["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("green")
+                && entry["item"]["kind"].as_str() == Some("text")
+                && entry["item"]["data"].as_str() == Some("0")
+        }));
+        assert!(data.iter().any(|entry| {
+            entry["color"].as_str() == Some("green")
+                && entry["item"]["kind"].as_str() == Some("text")
+                && entry["item"]["data"].as_str() == Some("1")
+        }));
+        assert!(!data.iter().any(|entry| {
+            entry["color"].as_str() == Some("green")
+                && entry["item"]["kind"].as_str() == Some("block")
+        }));
+    }
+
+    #[test]
     fn solve_problem_dispatches_japanese_arrows() {
         // A legal Japanese Arrows board has an arrow in every cell.  This is
         // a small all-given instance (all values are 1) that exercises the

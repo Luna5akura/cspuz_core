@@ -56,6 +56,68 @@ pub fn solve_japanese_sums(
     solver.irrefutable_facts().map(|f| f.get(num))
 }
 
+/// "Japanese Sums with Zeroes" variant: digits 0..=k are placed in some
+/// cells (the rest stay empty), digits do not repeat in a row or column,
+/// and a zero is an ordinary digit that does not separate groups.
+pub fn solve_japanese_sums_with_zeroes(
+    k: i32,
+    clue_vertical: &[Option<Vec<i32>>],
+    clue_horizontal: &[Option<Vec<i32>>],
+    given_numbers: &Option<Vec<Vec<Option<i32>>>>,
+) -> Option<Vec<Vec<Option<i32>>>> {
+    let h = clue_horizontal.len();
+    let w = clue_vertical.len();
+
+    let mut solver = Solver::new();
+    // 0..=k are the digits, k+1 means "no digit" (empty cell).
+    let num = &solver.int_var_2d((h, w), 0, k + 1);
+    solver.add_answer_key_int(num);
+
+    let mut add_constraint = |target: IntVarArray1D, clue: &Option<Vec<i32>>| {
+        for i in 0..=k {
+            solver.add_expr(target.eq(i).count_true().le(1));
+        }
+
+        if let Some(clue) = clue {
+            let is_present = target.le(k);
+            // Absent cells inherit the previous group id in japanese(), so
+            // zero out their contribution explicitly.
+            let digit_values = is_present.ite(&target, 0);
+            let group_id = japanese(&mut solver, &is_present, &vec![false; clue.len()]);
+
+            for i in 0..clue.len() {
+                if clue[i] >= 0 {
+                    solver.add_expr(
+                        group_id
+                            .eq(i as i32)
+                            .ite(&digit_values, 0)
+                            .sum()
+                            .eq(clue[i]),
+                    );
+                }
+            }
+        }
+    };
+
+    for y in 0..h {
+        add_constraint(num.slice_fixed_y((y, ..)), &clue_horizontal[y]);
+    }
+    for x in 0..w {
+        add_constraint(num.slice_fixed_x((.., x)), &clue_vertical[x]);
+    }
+    if let Some(given_numbers) = given_numbers {
+        for y in 0..h {
+            for x in 0..w {
+                if let Some(n) = given_numbers[y][x] {
+                    solver.add_expr(num.at((y, x)).eq(n));
+                }
+            }
+        }
+    }
+
+    solver.irrefutable_facts().map(|f| f.get(num))
+}
+
 type Problem = (
     i32,
     (Vec<Option<Vec<i32>>>, Vec<Option<Vec<i32>>>),
@@ -85,6 +147,18 @@ pub fn serialize_problem(problem: &Problem) -> Option<String> {
     problem_to_url_with_context_and_site(
         combinator(),
         "japanesesums",
+        "https://pzprxs.vercel.app/p?",
+        problem.clone(),
+        &Context::sized(height, width),
+    )
+}
+
+pub fn serialize_problem_with_zeroes(problem: &Problem) -> Option<String> {
+    let height = problem.1 .1.len();
+    let width = problem.1 .0.len();
+    problem_to_url_with_context_and_site(
+        combinator(),
+        "japanesesumswithzeroes",
         "https://pzprxs.vercel.app/p?",
         problem.clone(),
         &Context::sized(height, width),
@@ -152,5 +226,51 @@ mod tests {
         let problem = problem_for_tests();
         let url = "https://pzprxs.vercel.app/p?japanesesums/6/5/4/...ah5.j.1g.4g352...4.j.8go4z";
         util::tests::serializer_test(problem, url, serialize_problem, deserialize_problem);
+    }
+
+    #[test]
+    fn test_japanese_sums_with_zeroes_zero_is_a_digit() {
+        // A single zero digit forms a group whose sum is 0, matching the 0
+        // clue; the standard Japanese Sums rules cannot express this board.
+        let clue_vertical: Vec<Option<Vec<i32>>> = vec![None, None, None];
+        let clue_horizontal: Vec<Option<Vec<i32>>> = vec![Some(vec![0]), None, None];
+        let given_numbers: Option<Vec<Vec<Option<i32>>>> = Some(vec![
+            vec![Some(0), None, None],
+            vec![None; 3],
+            vec![None; 3],
+        ]);
+        let ans =
+            solve_japanese_sums_with_zeroes(3, &clue_vertical, &clue_horizontal, &given_numbers);
+        let ans = ans.expect("a 0 clue must be satisfiable with a 0 digit");
+        assert_eq!(
+            ans[0],
+            vec![Some(0), Some(4), Some(4)],
+            "cells next to the lone 0 must be empty (k+1)"
+        );
+    }
+
+    #[test]
+    fn test_japanese_sums_with_zeroes_zero_does_not_separate_groups() {
+        // [1, 0, 2] is a single group summing to 3.  The standard solver
+        // would reject it because it treats 0 as a blank that splits groups.
+        let clue_vertical: Vec<Option<Vec<i32>>> = vec![None, None, None];
+        let clue_horizontal: Vec<Option<Vec<i32>>> = vec![Some(vec![3]), None, None];
+        let given_numbers: Option<Vec<Vec<Option<i32>>>> = Some(vec![
+            vec![Some(1), Some(0), Some(2)],
+            vec![None; 3],
+            vec![None; 3],
+        ]);
+        let ans =
+            solve_japanese_sums_with_zeroes(3, &clue_vertical, &clue_horizontal, &given_numbers);
+        let ans = ans.expect("0 must not separate groups");
+        assert_eq!(ans[0], vec![Some(1), Some(0), Some(2)]);
+    }
+
+    #[test]
+    fn test_japanese_sums_with_zeroes_serializer() {
+        let problem = problem_for_tests();
+        let url = serialize_problem_with_zeroes(&problem).unwrap();
+        assert!(url.starts_with("https://pzprxs.vercel.app/p?japanesesumswithzeroes/"));
+        assert_eq!(deserialize_problem(&url), Some(problem));
     }
 }
