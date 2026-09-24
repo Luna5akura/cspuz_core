@@ -24,6 +24,11 @@ def main():
             "EXPORTED_FUNCTIONS=_solve_problem,_solve_problem_with_forced_lines,_enumerate_answers_problem,_solve_custom_travelline,_prepare_input_buffer",
         ]
 
+    # この環境の wasm-ld は --no-stack-first を受け付けない。
+    # emcc は -O1 以上で内部的に --no-stack-first を渡すため、
+    # 最適化フラグを除去して回避する (コード最適化は rustc 側で行われる)
+    extra_args = [a for a in extra_args if not a.startswith("-O")]
+
     args = ["emcc", "-o", output] + extra_args
     subprocess.check_call(args)
 

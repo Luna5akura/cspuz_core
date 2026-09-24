@@ -175,6 +175,14 @@ fn add_connectivity(
 
     let ord = solver.int_var_1d(n, 0, n as i32);
 
+    // 順序はすべて異なる: 形状は「直前の形状の隣」にしか置けないため、
+    // アクティブな形状は一筆書きの順序(ハミルトン路)をなす
+    for i in 0..n {
+        for j in (i + 1)..n {
+            solver.add_expr(ord.at(i).ne(ord.at(j)));
+        }
+    }
+
     for i in 0..n {
         let is_root = placements[i]
             .iter()
@@ -188,9 +196,11 @@ fn add_connectivity(
 
         let mut pred = vec![];
         for &j in &adj[i] {
-            solver.add_expr(
-                (placed.at(i) & placed.at(j)).imp(ord.at(i).le(ord.at(j) + 1)),
-            );
+            // 直前の形状であることの条件: ord_i == ord_j + 1 を満たす
+            // 隣接形状が存在すること。
+            // (ord_i <= ord_j + 1 の形の制約は、直前ではない隣接形状
+            //  に対しても課されてしまい、蛇行する鎖を不当に拒否する
+            //  ため使わない)
             pred.push(placed.at(j) & ord.at(i).eq(ord.at(j) + 1));
         }
         if !is_root {
@@ -207,16 +217,20 @@ fn add_connectivity(
     }
 }
 
-pub fn solve_lostspeech(
+pub struct LostSpeechSolveResult {
+    pub blue_cells: Vec<Vec<Option<bool>>>,
+    pub red_cells: Vec<Vec<Option<bool>>>,
+    pub blue_placements: Vec<Option<bool>>,
+    pub red_placements: Vec<Option<bool>>,
+    pub is_unique: bool,
+}
+
+fn run_solver(
     markers: &[Vec<i8>],
     invalid: &[Vec<bool>],
     pieces: &[Vec<Vec<bool>>],
-) -> Option<(
-    Vec<Vec<Option<bool>>>,
-    Vec<Vec<Option<bool>>>,
-    Vec<Option<bool>>,
-    Vec<Option<bool>>,
-)> {
+    facts_only: bool,
+) -> Option<LostSpeechSolveResult> {
     let (h, w) = util::infer_shape(markers);
 
     let blue_pieces = pieces
@@ -321,9 +335,63 @@ pub fn solve_lostspeech(
         }
     }
 
-    solver
-        .irrefutable_facts()
-        .map(|f| (f.get(blue), f.get(red), f.get(&blue_placed), f.get(&red_placed)))
+    if facts_only {
+        solver.irrefutable_facts().map(|f| LostSpeechSolveResult {
+            blue_cells: f.get(blue),
+            red_cells: f.get(red),
+            blue_placements: f.get(&blue_placed),
+            red_placements: f.get(&red_placed),
+            is_unique: true,
+        })
+    } else {
+        // 表示用: 1つの解を返す (形状の分解を決めるため)。
+        // 2つ目の解が存在するかどうかで一意性も判定する。
+        let mut answers = solver.answer_iter();
+        let first = answers.next()?;
+        let is_unique = answers.next().is_none();
+        let bp: Vec<Option<bool>> = first.get(&blue_placed);
+        let rp: Vec<Option<bool>> = first.get(&red_placed);
+        let bc: Vec<Vec<Option<bool>>> = first.get(blue);
+        let rc: Vec<Vec<Option<bool>>> = first.get(red);
+        Some(LostSpeechSolveResult {
+            blue_cells: bc,
+            red_cells: rc,
+            blue_placements: bp,
+            red_placements: rp,
+            is_unique,
+        })
+    }
+}
+
+pub fn solve_lostspeech(
+    markers: &[Vec<i8>],
+    invalid: &[Vec<bool>],
+    pieces: &[Vec<Vec<bool>>],
+) -> Option<(
+    Vec<Vec<Option<bool>>>,
+    Vec<Vec<Option<bool>>>,
+    Vec<Option<bool>>,
+    Vec<Option<bool>>,
+)> {
+    run_solver(markers, invalid, pieces, true).map(|r| {
+        (
+            r.blue_cells,
+            r.red_cells,
+            r.blue_placements,
+            r.red_placements,
+        )
+    })
+}
+
+/// 表示用: 1つの解(セルと形状分解)を返す。
+/// 解が一意に定まらない場合でも、整合的な1つの解を表示できるように
+/// する (プレイヤーが置いた図形と同じ見た目になる)。
+pub fn solve_lostspeech_display(
+    markers: &[Vec<i8>],
+    invalid: &[Vec<bool>],
+    pieces: &[Vec<Vec<bool>>],
+) -> Option<LostSpeechSolveResult> {
+    run_solver(markers, invalid, pieces, false)
 }
 
 //---------------------------------------------------------------------------
@@ -653,6 +721,48 @@ mod tests {
         let problem2 = deserialize_problem(&reserialized).unwrap();
         assert_eq!(problem.0, problem2.0);
         assert_eq!(problem.2, problem2.2);
+    }
+
+    #[test]
+    fn test_lostspeech_chain_rule() {
+        // 5x1盤: 青起点 + 黒点が2つのドミノを強制する配置。
+        // ドミノ2つが離れている配置しか存在しない場合は解なしになる。
+        // markers: (0,0)=6起点, (0,1)=2, (0,2)=2, (0,3)=1黒点, (0,4)=1黒点
+        // 黒点(0,3),(0,4)を覆うドミノは(0,3),(0,4)のみ → 起点側と非連結
+        let problem = deserialize_problem(
+            "https://puzz.link/p?lostspeech/5/1/622110/1/21o",
+        )
+        .unwrap();
+        let ans = solve_lostspeech(&problem.0, &problem.1, &problem.2);
+        assert!(ans.is_none(), "disconnected chain must be rejected");
+
+        // 隣接する配置なら解ける: markers (0,0)=6, (0,1)=2, (0,2)=1, (0,3)=1, (0,4)=2
+        let problem2 = deserialize_problem(
+            "https://puzz.link/p?lostspeech/5/1/621120/1/21o",
+        )
+        .unwrap();
+        let ans2 = solve_lostspeech(&problem2.0, &problem2.1, &problem2.2);
+        assert!(ans2.is_some(), "adjacent chain must be solvable");
+    }
+
+    #[test]
+    fn test_lostspeech_user_puzzle_unsolvable() {
+        // T字形に分岐する配置の盤面。
+        // 「次の形状は直前の形状の隣にしか置けない」ため一筆書きの順序が
+        // 存在せず、解なしになる。
+        let url = "https://puzz.link/p?lostspeech/8/8/p1l311k6zx0000000000000/1/11g";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech(&problem.0, &problem.1, &problem.2);
+        assert!(ans.is_none(), "branching chain must be rejected");
+    }
+
+    #[test]
+    fn test_lostspeech_strict_snake_solvable() {
+        // 蛇行する鎖(ユーザーの問題): 厳密チェーンで解ける
+        let url = "https://puzz.link/p?lostspeech/8/8/p1l1111i611117i212112j2111k1q0000000000000/2/11g/32bg";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_display(&problem.0, &problem.1, &problem.2);
+        assert!(ans.is_some(), "snaking chain must be solvable");
     }
 
     #[test]
