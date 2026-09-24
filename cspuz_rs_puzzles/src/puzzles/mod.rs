@@ -69,6 +69,7 @@ pub mod litherslink;
 pub mod lits;
 pub mod lohkous;
 pub mod loop_special;
+pub mod lostspeech;
 pub mod magic_snail;
 pub mod magic_summer;
 pub mod masyu;
