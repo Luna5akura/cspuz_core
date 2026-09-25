@@ -201,7 +201,7 @@ mod tests {
         //  - 盤面1の2枚の正方形 (8マス) と盤面2の赤T (4マス) は確定
         //  - 盤面2の青は起点(0,0)のみ確定
         let response = solve_problem_json_from_bytes(
-            b"https://puzz.link/p?lostspeech/4/4/6222222g2g22g2270000/4/22u/22u/13s/23eg",
+            b"https://puzz.link/p?lostspeech/4/4/6222222g2g22g2270000/4/22u/22u/13s/23eg&variant=1",
         );
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));
@@ -227,11 +227,91 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_lostspeech_accepts_pzpr_variant_double_slash() {
+        // ブラウザでvariant有効時のURL形態 (v: 段の後ろにスラッシュが残る) も受理する
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech//8/8/q122j1111i561g11j2222zk0000000000000/4/12o/22u/22e/22u&variant=1",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+    }
+
+    #[test]
+    fn solve_problem_lostspeech_accepts_pzpr_variant_segment() {
+        // pzprの「v:バリアントID」セグメントを含むURLも受理する
+        // (variantチェックボックスを有効にするとURLに v: が入る)
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech/v:/8/8/q122j1111i561g11j2222zk0000000000000/4/12o/22u/22e/22u&variant=1",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+    }
+
+    #[test]
+    fn solve_problem_lostspeech_two_solutions_shown_per_board() {
+        // 2x2 (61170): 各盤面に (縦,縦) と (横,横) の2解。
+        // variant=0 では左盤面に1つ目、右盤面に2つ目の解が表示される。
+        let without_variant = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech/2/2/61170/4/12o/12o/12o/12o&variant=0",
+        );
+        let without_variant = json::parse(&without_variant).unwrap();
+        assert_eq!(without_variant["status"].as_str(), Some("ok"));
+        let data = without_variant["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        // 左右それぞれ4マス (青2+赤2) が具体的な解として塗られる
+        assert_eq!(
+            data.iter()
+                .filter(|e| e["item"].as_str() == Some("fill"))
+                .count(),
+            8,
+            "two concrete solutions must be shown: {}",
+            without_variant
+        );
+
+        // variant=1 では共同の解の確定事実のみ (起点マスだけ)
+        let with_variant = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech/2/2/61170/4/12o/12o/12o/12o&variant=1",
+        );
+        let with_variant = json::parse(&with_variant).unwrap();
+        assert_eq!(with_variant["status"].as_str(), Some("ok"));
+        let data2 = with_variant["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            data2.iter()
+                .filter(|e| e["item"].as_str() == Some("fill"))
+                .count(),
+            4,
+            "only the certain cells must be shown: {}",
+            with_variant
+        );
+    }
+
+    #[test]
+    fn solve_problem_lostspeech_variant_rule_toggles_cross_containment() {
+        // 例题3 (q122j): variant=1 で唯一解、variant=0 では跨盤包含なしで非一意
+        let base = "https://puzz.link/p?lostspeech/8/8/q122j1111i561g11j2222zk0000000000000/4/12o/22u/22e/22u";
+        let with_variant = solve_problem_json_from_bytes(format!("{}&variant=1", base).as_bytes());
+        let with_variant = json::parse(&with_variant).unwrap();
+        assert_eq!(with_variant["status"].as_str(), Some("ok"));
+        assert_eq!(with_variant["description"]["isUnique"], true);
+
+        let without_variant =
+            solve_problem_json_from_bytes(format!("{}&variant=0", base).as_bytes());
+        let without_variant = json::parse(&without_variant).unwrap();
+        assert_eq!(without_variant["status"].as_str(), Some("ok"));
+        assert_eq!(without_variant["description"]["isUnique"], false);
+    }
+
+    #[test]
     fn solve_problem_lostspeech_unique_shows_full_solution() {
         // 一意に解ける4x4ツイン盤: 盤面1は2x2正方形2枚、盤面2はTテトリミノ2枚。
         // ソルバー表示には両盤面の全形状 (計16マスの塗り) と境界線が含まれる。
         let response = solve_problem_json_from_bytes(
-            b"https://puzz.link/p?lostspeech/4/4/622g222gh22g2270000/4/22u/22u/32t0/23eg",
+            b"https://puzz.link/p?lostspeech/4/4/622g222gh22g2270000/4/22u/22u/32t0/23eg&variant=1",
         );
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));

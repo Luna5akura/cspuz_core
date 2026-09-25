@@ -7,8 +7,35 @@ fn twin_offset(width: usize) -> usize {
 }
 
 pub fn solve(url: &str) -> Result<Board, &'static str> {
-    let problem = lostspeech::deserialize_problem(url).ok_or("invalid url")?;
-    let ans = lostspeech::solve_lostspeech_facts(&problem.0, &problem.1, &problem.2)
+    // 「this puzzle uses variant rule」: URL末尾の &variant=1 で跨盤包含ルールを有効化
+    let variant = url.ends_with("&variant=1");
+
+    // pzprのURLは「v:バリアントID」セグメントを含むことがある
+    // (バリアントルールのチェックボックスとは別物)。solverでは不要なので除去する。
+    // また "v:" 除去などで生じた空セグメント (二重スラッシュ) も除去する
+    // (ただし "https://" のスキームの空セグメントは残す)。
+    let cleaned = {
+        let segs = url.split('/').collect::<Vec<_>>();
+        let mut out = String::new();
+        let mut prev_ends_colon = false;
+        for (i, seg) in segs.iter().enumerate() {
+            if seg.starts_with("v:") {
+                prev_ends_colon = false;
+                continue;
+            }
+            if seg.is_empty() && !prev_ends_colon {
+                continue;
+            }
+            if i > 0 {
+                out.push('/');
+            }
+            out.push_str(seg);
+            prev_ends_colon = seg.ends_with(':');
+        }
+        out
+    };
+    let problem = lostspeech::deserialize_problem(&cleaned).ok_or("invalid url")?;
+    let ans = lostspeech::solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, variant)
         .ok_or("no answer")?;
 
     let height = problem.0.len();

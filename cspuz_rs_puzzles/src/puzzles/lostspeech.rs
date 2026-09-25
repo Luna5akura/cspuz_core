@@ -302,6 +302,7 @@ fn run_solver(
     markers: &[Vec<i8>],
     invalid: &[Vec<bool>],
     pieces: &[Vec<Vec<bool>>],
+    variant: bool,
 ) -> Option<LostSpeechSolveResult> {
     let (h, w) = util::infer_shape(markers);
 
@@ -419,12 +420,15 @@ fn run_solver(
     add_no_containment(&mut solver, &p_blue1, &placements[0], &p_red1, &placements[1]);
     add_no_containment(&mut solver, &p_blue2, &placements[2], &p_red2, &placements[3]);
 
-    // 左右の盤面の間でも、どの図形ももう一方の解のどの図形にも
+    // 「this puzzle uses variant rule」が有効な場合のみ、
+    // 左右の盤面の間でもどの図形ももう一方の解のどの図形にも
     // 完全に含まれてはいけない
-    add_no_containment(&mut solver, &p_blue1, &placements[0], &p_blue2, &placements[2]);
-    add_no_containment(&mut solver, &p_blue1, &placements[0], &p_red2, &placements[3]);
-    add_no_containment(&mut solver, &p_red1, &placements[1], &p_blue2, &placements[2]);
-    add_no_containment(&mut solver, &p_red1, &placements[1], &p_red2, &placements[3]);
+    if variant {
+        add_no_containment(&mut solver, &p_blue1, &placements[0], &p_blue2, &placements[2]);
+        add_no_containment(&mut solver, &p_blue1, &placements[0], &p_red2, &placements[3]);
+        add_no_containment(&mut solver, &p_red1, &placements[1], &p_blue2, &placements[2]);
+        add_no_containment(&mut solver, &p_red1, &placements[1], &p_red2, &placements[3]);
+    }
 
     solver.irrefutable_facts().map(|f| {
         let blue1_cells = f.get(blue1);
@@ -458,15 +462,176 @@ fn run_solver(
     })
 }
 
+// 1つの盤面 (ピース0=青, ピース1=赤) の解
+struct SingleBoardSolution {
+    blue: Vec<Vec<bool>>,
+    red: Vec<Vec<bool>>,
+    blue_placements: Vec<bool>,
+    red_placements: Vec<bool>,
+}
+
+// 1つの盤面の解を最大 max_answers 個まで列挙する。
+// (バリアントルール無効時は左右の盤面が独立に同じ問題になるため、
+//  盤面1のピースだけで解を数える)
+fn enumerate_single_board(
+    markers: &[Vec<i8>],
+    invalid: &[Vec<bool>],
+    pieces: &[Vec<Vec<bool>>],
+    max_answers: usize,
+) -> Option<Vec<SingleBoardSolution>> {
+    let (h, w) = util::infer_shape(markers);
+
+    let blue_pieces = match pieces.get(0) {
+        Some(p) => vec![p.clone()],
+        None => vec![],
+    };
+    let red_pieces = match pieces.get(1) {
+        Some(p) => vec![p.clone()],
+        None => vec![],
+    };
+    let blue_placements = gen_placements(&blue_pieces, markers, invalid);
+    let red_placements = gen_placements(&red_pieces, markers, invalid);
+
+    let mut solver = Solver::new();
+    let blue = &solver.bool_var_2d((h, w));
+    let red = &solver.bool_var_2d((h, w));
+    let p_blue = solver.bool_var_1d(blue_placements.len());
+    let p_red = solver.bool_var_1d(red_placements.len());
+    solver.add_answer_key_bool(&p_blue);
+    solver.add_answer_key_bool(&p_red);
+
+    add_connectivity(&mut solver, &p_blue, &blue_placements, markers, 6);
+    add_connectivity(&mut solver, &p_red, &red_placements, markers, 7);
+
+    for y in 0..h {
+        for x in 0..w {
+            let b = blue_placements
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cs)| {
+                    if cs.contains(&(y, x)) {
+                        Some(p_blue.at(i))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            solver.add_expr(count_true(b.clone()).le(1));
+            solver.add_expr(blue.at((y, x)).iff(count_true(b).eq(1)));
+
+            let r = red_placements
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cs)| {
+                    if cs.contains(&(y, x)) {
+                        Some(p_red.at(i))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            solver.add_expr(count_true(r.clone()).le(1));
+            solver.add_expr(red.at((y, x)).iff(count_true(r).eq(1)));
+        }
+    }
+
+    add_marker_constraints(&mut solver, blue, red, markers);
+    add_no_containment(&mut solver, &p_blue, &blue_placements, &p_red, &red_placements);
+
+    let mut ret = vec![];
+    for ans in solver.answer_iter() {
+        let bp: Vec<bool> = ans
+            .get(&p_blue)
+            .into_iter()
+            .map(|v| v.unwrap_or(false))
+            .collect();
+        let rp: Vec<bool> = ans
+            .get(&p_red)
+            .into_iter()
+            .map(|v| v.unwrap_or(false))
+            .collect();
+
+        let mut bcells = vec![vec![false; w]; h];
+        let mut rcells = vec![vec![false; w]; h];
+        for (i, cs) in blue_placements.iter().enumerate() {
+            if bp[i] {
+                for &(y, x) in cs {
+                    bcells[y][x] = true;
+                }
+            }
+        }
+        for (i, cs) in red_placements.iter().enumerate() {
+            if rp[i] {
+                for &(y, x) in cs {
+                    rcells[y][x] = true;
+                }
+            }
+        }
+
+        ret.push(SingleBoardSolution {
+            blue: bcells,
+            red: rcells,
+            blue_placements: bp,
+            red_placements: rp,
+        });
+        if ret.len() >= max_answers {
+            break;
+        }
+    }
+    Some(ret)
+}
+
+fn to_opt_cells(cells: &[Vec<bool>]) -> Vec<Vec<Option<bool>>> {
+    cells
+        .iter()
+        .map(|row| row.iter().map(|&b| Some(b)).collect())
+        .collect()
+}
+
+fn to_opt_placements(pl: &[bool]) -> Vec<Option<bool>> {
+    pl.iter().map(|&b| Some(b)).collect()
+}
+
+// 左右の盤面が同じで解がちょうど2つの場合、
+// 左盤面に1つ目の解、右盤面に2つ目の解を表示する。
+fn two_solutions_result(
+    sol1: &SingleBoardSolution,
+    sol2: &SingleBoardSolution,
+) -> LostSpeechSolveResult {
+    LostSpeechSolveResult {
+        blue1_cells: to_opt_cells(&sol1.blue),
+        red1_cells: to_opt_cells(&sol1.red),
+        blue2_cells: to_opt_cells(&sol2.blue),
+        red2_cells: to_opt_cells(&sol2.red),
+        blue1_placements: to_opt_placements(&sol1.blue_placements),
+        red1_placements: to_opt_placements(&sol1.red_placements),
+        blue2_placements: to_opt_placements(&sol2.blue_placements),
+        red2_placements: to_opt_placements(&sol2.red_placements),
+        is_unique: false,
+    }
+}
+
 /// ソルバー表示用: 全解に共通する確定事実のみを返す。
 /// 解が一意でない場合でも、どれか1つの解を表示するのではなく、
 /// 「どの解でも必ず成り立つ」セル・形状配置のみを返す。
+///
+/// variant=false (バリアントルール無効) の場合、左右の盤面は独立に同じ問題
+/// になる。このとき解がちょうど2つならば、左盤面に1つ目の解、
+/// 右盤面に2つ目の解を表示する。
 pub fn solve_lostspeech_facts(
     markers: &[Vec<i8>],
     invalid: &[Vec<bool>],
     pieces: &[Vec<Vec<bool>>],
+    variant: bool,
 ) -> Option<LostSpeechSolveResult> {
-    run_solver(markers, invalid, pieces)
+    if !variant {
+        if let Some(sols) = enumerate_single_board(markers, invalid, pieces, 3) {
+            if sols.len() == 2 {
+                return Some(two_solutions_result(&sols[0], &sols[1]));
+            }
+        }
+    }
+    run_solver(markers, invalid, pieces, variant)
 }
 
 //---------------------------------------------------------------------------
@@ -809,7 +974,7 @@ mod tests {
         // 2つの解の形状は互いに完全に含まれないため、共同の解も一意。
         let url = "https://puzz.link/p?lostspeech/4/4/622g222gh22g2270000/4/22u/22u/32t0/23eg";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true).unwrap();
 
         assert!(ans.is_unique);
         assert!(ans.blue1_cells.iter().flatten().all(|v| v.is_some()));
@@ -840,7 +1005,7 @@ mod tests {
         // (跨盤包含制約はすべて満たす: 正方形とトロミノ・Tは互いに包含しない)
         let url = "https://puzz.link/p?lostspeech/4/4/6222222g2g22g2270000/4/22u/22u/13s/23eg";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true).unwrap();
 
         assert!(!ans.is_unique);
         // 盤面1は確定
@@ -868,7 +1033,7 @@ mod tests {
         // 盤面内の包含制約で解なしになる。
         let url = "https://puzz.link/p?lostspeech/3/3/624274i00/4/12o/12o/12o/12o";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true);
         assert!(ans.is_none(), "contained shapes on the same board must be rejected");
     }
 
@@ -878,7 +1043,7 @@ mod tests {
         // 赤=単セル(1,1)が青の2x2正方形に完全に含まれる (起点豁免なし) → 解なし。
         let url = "https://puzz.link/p?lostspeech/3/3/62227g2h00/4/22u/11g/13s/11g";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true);
         assert!(ans.is_none(), "contained shapes must be rejected (no start exemption)");
     }
 
@@ -890,8 +1055,11 @@ mod tests {
         // 必ず包含が発生し、解なしになる。
         let url = "https://puzz.link/p?lostspeech/8/8/y122j1111i611g11g23g2222w0000000000000/4/22e/22u/12o/22u";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true);
         assert!(ans.is_none(), "nesting forced by the shared start and blue dot");
+        // バリアントルール無効なら盤面内のルールのみ → 解あり
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false);
+        assert!(ans.is_some(), "solvable without the cross-board rule");
     }
 
     #[test]
@@ -901,8 +1069,54 @@ mod tests {
         // 必ず包含が発生し、解なしになる。
         let url = "https://puzz.link/p?lostspeech/8/8/q12k1111i611g11g23g2222zk0000000000000/4/12o/22u/22e/22u";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true);
         assert!(ans.is_none(), "nesting forced by the shared start and blue dot");
+    }
+
+    #[test]
+    fn test_lostspeech_two_solutions_display() {
+        // 2x2: 青起点(0,0), 黒点(0,1),(1,0), 赤起点(1,1)。ドミノ4枚。
+        // 各盤面に (縦,縦) と (横,横) の2解があり、variant無効時は
+        // 左盤面に1つ目、右盤面に2つ目の解が表示される。
+        let url = "https://puzz.link/p?lostspeech/2/2/61170/4/12o/12o/12o/12o";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).unwrap();
+
+        assert!(!ans.is_unique);
+        // すべてのセルが確定値 (事実ではなく具体的な解)
+        assert!(ans.blue1_cells.iter().flatten().all(|v| v.is_some()));
+        assert!(ans.blue2_cells.iter().flatten().all(|v| v.is_some()));
+        // 両盤面とも青起点 (0,0) は必ず覆われる
+        assert_eq!(ans.blue1_cells[0][0], Some(true));
+        assert_eq!(ans.blue2_cells[0][0], Some(true));
+        // 両盤面とも赤起点 (1,1) は必ず覆われる
+        assert_eq!(ans.red1_cells[1][1], Some(true));
+        assert_eq!(ans.red2_cells[1][1], Some(true));
+        // 2つの解は異なる (左=解1, 右=解2)
+        assert_ne!(ans.blue1_cells, ans.blue2_cells);
+        // それぞれの解は (縦,縦) または (横,横) のどちらかで、青と赤の向きは揃う
+        let v = ans.blue1_cells[1][0] == Some(true); // 青が縦
+        let h = ans.blue1_cells[0][1] == Some(true); // 青が横
+        assert_ne!(v, h);
+        assert_eq!(ans.red1_cells[0][1], Some(v)); // 赤も縦: (0,1),(1,1)
+        assert_eq!(ans.red1_cells[1][0], Some(h)); // 赤も横: (1,0),(1,1)
+        assert_ne!(ans.blue2_cells[0][1] == Some(true), ans.blue2_cells[1][0] == Some(true));
+    }
+
+    #[test]
+    fn test_lostspeech_example3_facts_without_variant() {
+        // 例题3 (q122j): variant無効時、各盤面に3つの解があるため
+        // (2つではない)、通常の確定事実表示になる。
+        let url = "https://puzz.link/p?lostspeech/8/8/q122j1111i561g11j2222zk0000000000000/4/12o/22u/22e/22u";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).unwrap();
+
+        assert!(!ans.is_unique);
+        // 青起点 (3,2) は両盤面とも確実に覆われる
+        assert_eq!(ans.blue1_cells[3][2], Some(true));
+        assert_eq!(ans.blue2_cells[3][2], Some(true));
+        // 確定しないセルが存在する (事実表示)
+        assert!(ans.blue1_cells.iter().flatten().any(|v| v.is_none()));
     }
 
     #[test]
@@ -911,9 +1125,11 @@ mod tests {
         // 青点が無いため、起点豁免の無い包含判定の下で一意に解ける。
         let url = "https://puzz.link/p?lostspeech/8/8/q122j1111i561g11j2222zk0000000000000/4/12o/22u/22e/22u";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true).unwrap();
 
         assert!(ans.is_unique);
+        // バリアントルール無効でも解ける (跨盤制約なし)
+        assert!(solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).is_some());
         // 盤面1: ドミノの鎖
         for &(y, x) in &[
             (1usize, 3usize),
