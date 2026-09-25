@@ -280,28 +280,15 @@ fn add_marker_constraints(
 }
 
 // 2つの形状グループの間で、互いに完全に含まれる形状ペアを禁止する。
-// 起点マス (青起点6・赤起点7) を含む形状は包含判定から除外される。
 fn add_no_containment(
     solver: &mut Solver,
     placed_a: &cspuz_rs::solver::BoolVarArray1D,
     placements_a: &[Vec<(usize, usize)>],
     placed_b: &cspuz_rs::solver::BoolVarArray1D,
     placements_b: &[Vec<(usize, usize)>],
-    markers: &[Vec<i8>],
 ) {
-    let has_start = |cells: &Vec<(usize, usize)>| -> bool {
-        cells
-            .iter()
-            .any(|&(y, x)| matches!(markers[y][x], 6 | 7))
-    };
     for (i, cells_a) in placements_a.iter().enumerate() {
-        if has_start(cells_a) {
-            continue; // 起点マスを含む形状は包含判定から除外
-        }
         for (j, cells_b) in placements_b.iter().enumerate() {
-            if has_start(cells_b) {
-                continue; // 起点マスを含む形状は包含判定から除外
-            }
             let a_contains_b = cells_b.iter().all(|c| cells_a.contains(c));
             let b_contains_a = cells_a.iter().all(|c| cells_b.contains(c));
             if a_contains_b || b_contains_a {
@@ -429,57 +416,15 @@ fn run_solver(
     add_marker_constraints(&mut solver, blue2, red2, markers);
 
     // 各盤面内で、青と赤の図形は互いに完全に含まれない
-    add_no_containment(
-        &mut solver,
-        &p_blue1,
-        &placements[0],
-        &p_red1,
-        &placements[1],
-        markers,
-    );
-    add_no_containment(
-        &mut solver,
-        &p_blue2,
-        &placements[2],
-        &p_red2,
-        &placements[3],
-        markers,
-    );
+    add_no_containment(&mut solver, &p_blue1, &placements[0], &p_red1, &placements[1]);
+    add_no_containment(&mut solver, &p_blue2, &placements[2], &p_red2, &placements[3]);
 
     // 左右の盤面の間でも、どの図形ももう一方の解のどの図形にも
-    // 完全に含まれてはいけない (起点マスは包含の判定に数えない)
-    add_no_containment(
-        &mut solver,
-        &p_blue1,
-        &placements[0],
-        &p_blue2,
-        &placements[2],
-        markers,
-    );
-    add_no_containment(
-        &mut solver,
-        &p_blue1,
-        &placements[0],
-        &p_red2,
-        &placements[3],
-        markers,
-    );
-    add_no_containment(
-        &mut solver,
-        &p_red1,
-        &placements[1],
-        &p_blue2,
-        &placements[2],
-        markers,
-    );
-    add_no_containment(
-        &mut solver,
-        &p_red1,
-        &placements[1],
-        &p_red2,
-        &placements[3],
-        markers,
-    );
+    // 完全に含まれてはいけない
+    add_no_containment(&mut solver, &p_blue1, &placements[0], &p_blue2, &placements[2]);
+    add_no_containment(&mut solver, &p_blue1, &placements[0], &p_red2, &placements[3]);
+    add_no_containment(&mut solver, &p_red1, &placements[1], &p_blue2, &placements[2]);
+    add_no_containment(&mut solver, &p_red1, &placements[1], &p_red2, &placements[3]);
 
     solver.irrefutable_facts().map(|f| {
         let blue1_cells = f.get(blue1);
@@ -928,60 +873,43 @@ mod tests {
     }
 
     #[test]
-    fn test_lostspeech_start_not_counted_for_containment() {
+    fn test_lostspeech_start_cells_count_for_containment() {
         // 3x3: 青起点(0,0), 赤起点(1,1), 空心点(0,1),(0,2),(1,0),(2,0)。
-        // 赤=単セル(1,1)は起点マスだけなので、青の2x2正方形に
-        // 含まれていても包含とみなさない → 解あり。
-        // (盤面2の青=3連トロミノは青の正方形と包含しないため、
-        //  跨盤包含制約も満たす)
+        // 赤=単セル(1,1)が青の2x2正方形に完全に含まれる (起点豁免なし) → 解なし。
         let url = "https://puzz.link/p?lostspeech/3/3/62227g2h00/4/22u/11g/13s/11g";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
-        assert_eq!(ans.blue1_cells[0][0], Some(true));
-        assert_eq!(ans.red1_cells[1][1], Some(true));
-        assert_eq!(ans.blue2_cells[0][0], Some(true));
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        assert!(ans.is_none(), "contained shapes must be rejected (no start exemption)");
     }
 
     #[test]
     fn test_lostspeech_example() {
         // ユーザー提供の例题 (8x8)。青起点(4,1), 青点(5,1)。赤起点なし。
         // 盤面1: L形の鎖、盤面2: ドミノの鎖。
-        // 起点を含む形状は包含判定から除外されるため解が存在する。
-        // ただし空心点の覆い方に複数の選択肢があり、非一意。
+        // 起点豁免の無い包含判定では、青点(5,1)を両盤面の青形状が覆うため
+        // 必ず包含が発生し、解なしになる。
         let url = "https://puzz.link/p?lostspeech/8/8/y122j1111i611g11g23g2222w0000000000000/4/22e/22u/12o/22u";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
-
-        assert!(!ans.is_unique);
-        // 全黒点と起点・青点は両盤面とも確実に覆われる
-        for (name, cells) in [("blue1", &ans.blue1_cells), ("blue2", &ans.blue2_cells)] {
-            for &(y, x) in &[
-                (2usize, 3usize),
-                (3, 2),
-                (3, 3),
-                (3, 4),
-                (3, 5),
-                (4, 2),
-                (4, 3),
-                (4, 5),
-                (4, 6),
-                (4, 1), // 青起点
-                (5, 1), // 青点
-            ] {
-                assert_eq!(cells[y][x], Some(true), "{} ({},{}) must be covered", name, y, x);
-            }
-        }
-        // 赤は両盤面とも置かれない
-        assert!(ans.red1_cells.iter().flatten().all(|v| v == &Some(false)));
-        assert!(ans.red2_cells.iter().flatten().all(|v| v == &Some(false)));
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        assert!(ans.is_none(), "nesting forced by the shared start and blue dot");
     }
 
     #[test]
     fn test_lostspeech_example2() {
         // ユーザー提供の例题その2 (8x8)。青起点(3,1), 青点(4,1)。赤起点なし。
-        // 盤面1: ドミノの鎖、盤面2: L形の鎖。
-        // 起点を含む形状は包含判定から除外されるため、この例题は一意に解ける。
+        // 起点豁免の無い包含判定では、青点(4,1)を両盤面の青形状が覆うため
+        // 必ず包含が発生し、解なしになる。
         let url = "https://puzz.link/p?lostspeech/8/8/q12k1111i611g11g23g2222zk0000000000000/4/12o/22u/22e/22u";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        assert!(ans.is_none(), "nesting forced by the shared start and blue dot");
+    }
+
+    #[test]
+    fn test_lostspeech_example3() {
+        // ユーザー提供の例题その3 (8x8)。青起点(3,2), 三角(3,1)。赤起点なし。
+        // 青点が無いため、起点豁免の無い包含判定の下で一意に解ける。
+        let url = "https://puzz.link/p?lostspeech/8/8/q122j1111i561g11j2222zk0000000000000/4/12o/22u/22e/22u";
         let problem = deserialize_problem(url).unwrap();
         let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
 
@@ -989,17 +917,15 @@ mod tests {
         // 盤面1: ドミノの鎖
         for &(y, x) in &[
             (1usize, 3usize),
+            (1, 4),
             (2, 2),
             (2, 3),
             (2, 4),
             (2, 5),
-            (3, 1),
             (3, 2),
             (3, 3),
             (3, 5),
             (3, 6),
-            (4, 1),
-            (4, 3),
             (4, 5),
             (4, 6),
         ] {
@@ -1009,16 +935,16 @@ mod tests {
         for &(y, x) in &[
             (1usize, 3usize),
             (1, 4),
+            (1, 5),
             (2, 2),
             (2, 3),
             (2, 4),
             (2, 5),
-            (3, 1),
             (3, 2),
             (3, 3),
             (3, 5),
             (3, 6),
-            (4, 1),
+            (4, 3),
         ] {
             assert_eq!(ans.blue2_cells[y][x], Some(true));
         }
