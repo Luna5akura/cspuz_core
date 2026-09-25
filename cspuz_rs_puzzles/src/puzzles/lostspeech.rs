@@ -5,14 +5,20 @@ use cspuz_rs::serializer::{
 };
 use cspuz_rs::solver::{any, count_true, Solver};
 
-// Lost Speech
+// Lost Speech (ツイン盤面)
 //
-// Problem = (markers, invalid, pieces)
-//   markers[y][x]: -1 = none, 1 = black dot, 2 = hollow dot, 3 = blue dot,
-//                  4 = blue-red dot, 5 = triangle, 6 = blue start, 7 = red start,
-//                  8 = red dot
-//   invalid[y][x]: unusable cell (gray)
-//   pieces: bank shapes; even index = blue, odd index = red
+// 2つの同一盤面が左右に並び、マーカー (点・三角・起点・灰色) は共有される。
+// 各盤面には青と赤の形状が1つずつ割り当てられ、その形状を起点マスを覆う
+// ように1回だけ配置する。点は各盤面の覆われ方を制約する:
+//   黒点      : 高々1つの形状
+//   黒空心点  : 高々1つの形状
+//   青点      : 高々1つの青の形状 (赤なし)
+//   青赤点    : 青と赤が1つずつ
+//   赤点      : 高々1つの赤の形状 (青なし)
+// 青起点はちょうど1つ必要で、青の形状は青起点を覆う。赤起点は任意で、
+// ある場合は赤の形状が赤起点を覆う。赤起点が無い場合は赤の形状は置かない。
+// 同じ盤面内の青と赤は互いに完全に含まれない。さらに2つの解の間でも、
+// どの形状ももう一方の解のどの形状にも完全に含まれてはならない。
 pub type Problem = (Vec<Vec<i8>>, Vec<Vec<bool>>, Vec<Vec<Vec<bool>>>);
 
 fn enumerate_piece_transformations(piece: &[Vec<bool>]) -> Vec<Vec<Vec<bool>>> {
@@ -109,7 +115,11 @@ pub fn gen_placements(
                     if cells.iter().all(|&(dy, dx)| {
                         let cy = y + dy;
                         let cx = x + dx;
-                        !invalid[cy][cx] && markers[cy][cx] >= 1
+                        // 形状のすべてのマスは「点」のあるマスでなければならない
+                        // (点: 1黒点 2空心点 3青点 4青赤点 8赤点。
+                        //  起点マス6/7は除く。三角マーク5は点ではないので覆えない)
+                        let m = markers[cy][cx];
+                        !invalid[cy][cx] && (m == 1 || m == 2 || m == 3 || m == 4 || m == 6 || m == 7 || m == 8)
                     }) {
                         ret.push(
                             cells
@@ -126,6 +136,19 @@ pub fn gen_placements(
     ret
 }
 
+pub struct LostSpeechSolveResult {
+    pub blue1_cells: Vec<Vec<Option<bool>>>,
+    pub red1_cells: Vec<Vec<Option<bool>>>,
+    pub blue2_cells: Vec<Vec<Option<bool>>>,
+    pub red2_cells: Vec<Vec<Option<bool>>>,
+    pub blue1_placements: Vec<Option<bool>>,
+    pub red1_placements: Vec<Option<bool>>,
+    pub blue2_placements: Vec<Option<bool>>,
+    pub red2_placements: Vec<Option<bool>>,
+    pub is_unique: bool,
+}
+
+// 2つの配置が辺で隣接しているか (両側とも非三角マスで隣接している場合のみ)
 fn placements_adjacent(
     cells_a: &[(usize, usize)],
     cells_b: &[(usize, usize)],
@@ -147,6 +170,10 @@ fn placements_adjacent(
     false
 }
 
+// ある色の形状を「起点マスから始まる鎖」に制約する。
+// 最初の形状は起点マスを覆い、以降の形状は同じ色の直前の形状と
+// 辺で接する (三角マークのマスを通した接続は隣接とみなさない)。
+// 起点マスが無い場合はその色の形状は置けない。
 fn add_connectivity(
     solver: &mut Solver,
     placed: &cspuz_rs::solver::BoolVarArray1D,
@@ -198,9 +225,6 @@ fn add_connectivity(
         for &j in &adj[i] {
             // 直前の形状であることの条件: ord_i == ord_j + 1 を満たす
             // 隣接形状が存在すること。
-            // (ord_i <= ord_j + 1 の形の制約は、直前ではない隣接形状
-            //  に対しても課されてしまい、蛇行する鎖を不当に拒否する
-            //  ため使わない)
             pred.push(placed.at(j) & ord.at(i).eq(ord.at(j) + 1));
         }
         if !is_root {
@@ -217,81 +241,14 @@ fn add_connectivity(
     }
 }
 
-pub struct LostSpeechSolveResult {
-    pub blue_cells: Vec<Vec<Option<bool>>>,
-    pub red_cells: Vec<Vec<Option<bool>>>,
-    pub blue_placements: Vec<Option<bool>>,
-    pub red_placements: Vec<Option<bool>>,
-    pub is_unique: bool,
-}
-
-fn run_solver(
+// 点のマーカー条件を1つの盤面分だけ課す
+fn add_marker_constraints(
+    solver: &mut Solver,
+    blue: &cspuz_rs::solver::BoolVarArray2D,
+    red: &cspuz_rs::solver::BoolVarArray2D,
     markers: &[Vec<i8>],
-    invalid: &[Vec<bool>],
-    pieces: &[Vec<Vec<bool>>],
-    facts_only: bool,
-) -> Option<LostSpeechSolveResult> {
+) {
     let (h, w) = util::infer_shape(markers);
-
-    let blue_pieces = pieces
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| if i % 2 == 0 { Some(p.clone()) } else { None })
-        .collect::<Vec<_>>();
-    let red_pieces = pieces
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| if i % 2 == 1 { Some(p.clone()) } else { None })
-        .collect::<Vec<_>>();
-
-    let blue_placements = gen_placements(&blue_pieces, markers, invalid);
-    let red_placements = gen_placements(&red_pieces, markers, invalid);
-
-    let mut solver = Solver::new();
-    let blue = &solver.bool_var_2d((h, w));
-    let red = &solver.bool_var_2d((h, w));
-    solver.add_answer_key_bool(blue);
-    solver.add_answer_key_bool(red);
-
-    let blue_placed = solver.bool_var_1d(blue_placements.len());
-    let red_placed = solver.bool_var_1d(red_placements.len());
-    solver.add_answer_key_bool(&blue_placed);
-    solver.add_answer_key_bool(&red_placed);
-
-    // 各マスの被覆: 同色の配置はちょうど1つ
-    for y in 0..h {
-        for x in 0..w {
-            let bcells = blue_placements
-                .iter()
-                .enumerate()
-                .filter_map(|(i, cells)| {
-                    if cells.contains(&(y, x)) {
-                        Some(blue_placed.at(i))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            solver.add_expr(count_true(bcells.clone()).le(1));
-            solver.add_expr(blue.at((y, x)).iff(count_true(bcells).eq(1)));
-
-            let rcells = red_placements
-                .iter()
-                .enumerate()
-                .filter_map(|(i, cells)| {
-                    if cells.contains(&(y, x)) {
-                        Some(red_placed.at(i))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            solver.add_expr(count_true(rcells.clone()).le(1));
-            solver.add_expr(red.at((y, x)).iff(count_true(rcells).eq(1)));
-        }
-    }
-
-    // マーカーの条件
     for y in 0..h {
         for x in 0..w {
             let b = blue.at((y, x));
@@ -300,16 +257,19 @@ fn run_solver(
                 1 => solver.add_expr(count_true(vec![b.clone(), r.clone()]).eq(1)),
                 2 => solver.add_expr(count_true(vec![b.clone(), r.clone()]).le(1)),
                 3 => {
-                    solver.add_expr(b.clone());
+                    // 青点: ちょうど1つの青の図形 (赤なし)
+                    solver.add_expr(b);
                     solver.add_expr(!r);
                 }
                 4 => {
-                    solver.add_expr(b.clone());
-                    solver.add_expr(r.clone());
+                    // 青赤点: 青と赤が1つずつ
+                    solver.add_expr(b);
+                    solver.add_expr(r);
                 }
                 6 => solver.add_expr(b),
                 7 => solver.add_expr(r),
                 8 => {
+                    // 赤点: ちょうど1つの赤の図形 (青なし)
                     solver.add_expr(r.clone());
                     solver.add_expr(!b);
                 }
@@ -317,81 +277,251 @@ fn run_solver(
             }
         }
     }
+}
 
-    // 連結条件 (同じ色の図形は鎖状に隣接する)
-    add_connectivity(&mut solver, &blue_placed, &blue_placements, markers, 6);
-    add_connectivity(&mut solver, &red_placed, &red_placements, markers, 7);
-
-    // 別の色の図形に完全に含まれる図形は禁止
-    for i in 0..blue_placements.len() {
-        let bcells = &blue_placements[i];
-        for j in 0..red_placements.len() {
-            let rcells = &red_placements[j];
-            if bcells.iter().all(|c| rcells.contains(c))
-                || rcells.iter().all(|c| bcells.contains(c))
-            {
-                solver.add_expr(!(blue_placed.at(i) & red_placed.at(j)));
+// 2つの形状グループの間で、互いに完全に含まれる形状ペアを禁止する。
+// 起点マス (青起点6・赤起点7) を含む形状は包含判定から除外される。
+fn add_no_containment(
+    solver: &mut Solver,
+    placed_a: &cspuz_rs::solver::BoolVarArray1D,
+    placements_a: &[Vec<(usize, usize)>],
+    placed_b: &cspuz_rs::solver::BoolVarArray1D,
+    placements_b: &[Vec<(usize, usize)>],
+    markers: &[Vec<i8>],
+) {
+    let has_start = |cells: &Vec<(usize, usize)>| -> bool {
+        cells
+            .iter()
+            .any(|&(y, x)| matches!(markers[y][x], 6 | 7))
+    };
+    for (i, cells_a) in placements_a.iter().enumerate() {
+        if has_start(cells_a) {
+            continue; // 起点マスを含む形状は包含判定から除外
+        }
+        for (j, cells_b) in placements_b.iter().enumerate() {
+            if has_start(cells_b) {
+                continue; // 起点マスを含む形状は包含判定から除外
+            }
+            let a_contains_b = cells_b.iter().all(|c| cells_a.contains(c));
+            let b_contains_a = cells_a.iter().all(|c| cells_b.contains(c));
+            if a_contains_b || b_contains_a {
+                solver.add_expr(!(placed_a.at(i) & placed_b.at(j)));
             }
         }
     }
-
-    if facts_only {
-        solver.irrefutable_facts().map(|f| LostSpeechSolveResult {
-            blue_cells: f.get(blue),
-            red_cells: f.get(red),
-            blue_placements: f.get(&blue_placed),
-            red_placements: f.get(&red_placed),
-            is_unique: true,
-        })
-    } else {
-        // 表示用: 1つの解を返す (形状の分解を決めるため)。
-        // 2つ目の解が存在するかどうかで一意性も判定する。
-        let mut answers = solver.answer_iter();
-        let first = answers.next()?;
-        let is_unique = answers.next().is_none();
-        let bp: Vec<Option<bool>> = first.get(&blue_placed);
-        let rp: Vec<Option<bool>> = first.get(&red_placed);
-        let bc: Vec<Vec<Option<bool>>> = first.get(blue);
-        let rc: Vec<Vec<Option<bool>>> = first.get(red);
-        Some(LostSpeechSolveResult {
-            blue_cells: bc,
-            red_cells: rc,
-            blue_placements: bp,
-            red_placements: rp,
-            is_unique,
-        })
-    }
 }
 
-pub fn solve_lostspeech(
-    markers: &[Vec<i8>],
-    invalid: &[Vec<bool>],
-    pieces: &[Vec<Vec<bool>>],
-) -> Option<(
-    Vec<Vec<Option<bool>>>,
-    Vec<Vec<Option<bool>>>,
-    Vec<Option<bool>>,
-    Vec<Option<bool>>,
-)> {
-    run_solver(markers, invalid, pieces, true).map(|r| {
-        (
-            r.blue_cells,
-            r.red_cells,
-            r.blue_placements,
-            r.red_placements,
-        )
-    })
-}
-
-/// 表示用: 1つの解(セルと形状分解)を返す。
-/// 解が一意に定まらない場合でも、整合的な1つの解を表示できるように
-/// する (プレイヤーが置いた図形と同じ見た目になる)。
-pub fn solve_lostspeech_display(
+fn run_solver(
     markers: &[Vec<i8>],
     invalid: &[Vec<bool>],
     pieces: &[Vec<Vec<bool>>],
 ) -> Option<LostSpeechSolveResult> {
-    run_solver(markers, invalid, pieces, false)
+    let (h, w) = util::infer_shape(markers);
+
+    // ピースは4つ: [青1, 赤1, 青2, 赤2] (各盤面に青と赤が1つずつ)
+    let piece_defs = (0..4)
+        .map(|i| pieces.get(i).cloned())
+        .collect::<Vec<_>>();
+
+    let placements = piece_defs
+        .iter()
+        .map(|p| match p {
+            Some(p) => gen_placements(&[p.clone()], markers, invalid),
+            None => vec![],
+        })
+        .collect::<Vec<_>>();
+
+	// 青起点はちょうど1つ必要。赤起点は任意 (無ければ赤の図形は置かない)
+	let blue_starts = markers.iter().flatten().filter(|&&m| m == 6).count();
+	let red_starts = markers.iter().flatten().filter(|&&m| m == 7).count();
+	if blue_starts != 1 || red_starts > 1 {
+		return None;
+	}
+
+    let mut solver = Solver::new();
+    let blue1 = &solver.bool_var_2d((h, w));
+    let red1 = &solver.bool_var_2d((h, w));
+    let blue2 = &solver.bool_var_2d((h, w));
+    let red2 = &solver.bool_var_2d((h, w));
+    solver.add_answer_key_bool(blue1);
+    solver.add_answer_key_bool(red1);
+    solver.add_answer_key_bool(blue2);
+    solver.add_answer_key_bool(red2);
+
+    let p_blue1 = solver.bool_var_1d(placements[0].len());
+    let p_red1 = solver.bool_var_1d(placements[1].len());
+    let p_blue2 = solver.bool_var_1d(placements[2].len());
+    let p_red2 = solver.bool_var_1d(placements[3].len());
+    solver.add_answer_key_bool(&p_blue1);
+    solver.add_answer_key_bool(&p_red1);
+    solver.add_answer_key_bool(&p_blue2);
+    solver.add_answer_key_bool(&p_red2);
+
+    // 各色の形状は起点から始まる鎖状に配置する
+    add_connectivity(&mut solver, &p_blue1, &placements[0], markers, 6);
+    add_connectivity(&mut solver, &p_red1, &placements[1], markers, 7);
+    add_connectivity(&mut solver, &p_blue2, &placements[2], markers, 6);
+    add_connectivity(&mut solver, &p_red2, &placements[3], markers, 7);
+
+    // 各マスの被覆: 同色の図形は重ならない
+    for y in 0..h {
+        for x in 0..w {
+            let b1 = placements[0]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cs)| {
+                    if cs.contains(&(y, x)) {
+                        Some(p_blue1.at(i))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            solver.add_expr(count_true(b1.clone()).le(1));
+            solver.add_expr(blue1.at((y, x)).iff(count_true(b1).eq(1)));
+
+            let r1 = placements[1]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cs)| {
+                    if cs.contains(&(y, x)) {
+                        Some(p_red1.at(i))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            solver.add_expr(count_true(r1.clone()).le(1));
+            solver.add_expr(red1.at((y, x)).iff(count_true(r1).eq(1)));
+
+            let b2 = placements[2]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cs)| {
+                    if cs.contains(&(y, x)) {
+                        Some(p_blue2.at(i))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            solver.add_expr(count_true(b2.clone()).le(1));
+            solver.add_expr(blue2.at((y, x)).iff(count_true(b2).eq(1)));
+
+            let r2 = placements[3]
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cs)| {
+                    if cs.contains(&(y, x)) {
+                        Some(p_red2.at(i))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            solver.add_expr(count_true(r2.clone()).le(1));
+            solver.add_expr(red2.at((y, x)).iff(count_true(r2).eq(1)));
+        }
+    }
+
+    // 点のマーカー条件 (各盤面ごと)
+    add_marker_constraints(&mut solver, blue1, red1, markers);
+    add_marker_constraints(&mut solver, blue2, red2, markers);
+
+    // 各盤面内で、青と赤の図形は互いに完全に含まれない
+    add_no_containment(
+        &mut solver,
+        &p_blue1,
+        &placements[0],
+        &p_red1,
+        &placements[1],
+        markers,
+    );
+    add_no_containment(
+        &mut solver,
+        &p_blue2,
+        &placements[2],
+        &p_red2,
+        &placements[3],
+        markers,
+    );
+
+    // 左右の盤面の間でも、どの図形ももう一方の解のどの図形にも
+    // 完全に含まれてはいけない (起点マスは包含の判定に数えない)
+    add_no_containment(
+        &mut solver,
+        &p_blue1,
+        &placements[0],
+        &p_blue2,
+        &placements[2],
+        markers,
+    );
+    add_no_containment(
+        &mut solver,
+        &p_blue1,
+        &placements[0],
+        &p_red2,
+        &placements[3],
+        markers,
+    );
+    add_no_containment(
+        &mut solver,
+        &p_red1,
+        &placements[1],
+        &p_blue2,
+        &placements[2],
+        markers,
+    );
+    add_no_containment(
+        &mut solver,
+        &p_red1,
+        &placements[1],
+        &p_red2,
+        &placements[3],
+        markers,
+    );
+
+    solver.irrefutable_facts().map(|f| {
+        let blue1_cells = f.get(blue1);
+        let red1_cells = f.get(red1);
+        let blue2_cells = f.get(blue2);
+        let red2_cells = f.get(red2);
+        let blue1_placements = f.get(&p_blue1);
+        let red1_placements = f.get(&p_red1);
+        let blue2_placements = f.get(&p_blue2);
+        let red2_placements = f.get(&p_red2);
+        // 解が一意である ⇔ すべての変数が全解で同じ値を持つ
+        let is_unique = blue1_cells.iter().flatten().all(|v| v.is_some())
+            && red1_cells.iter().flatten().all(|v| v.is_some())
+            && blue2_cells.iter().flatten().all(|v| v.is_some())
+            && red2_cells.iter().flatten().all(|v| v.is_some())
+            && blue1_placements.iter().all(|v| v.is_some())
+            && red1_placements.iter().all(|v| v.is_some())
+            && blue2_placements.iter().all(|v| v.is_some())
+            && red2_placements.iter().all(|v| v.is_some());
+        LostSpeechSolveResult {
+            blue1_cells,
+            red1_cells,
+            blue2_cells,
+            red2_cells,
+            blue1_placements,
+            red1_placements,
+            blue2_placements,
+            red2_placements,
+            is_unique,
+        }
+    })
+}
+
+/// ソルバー表示用: 全解に共通する確定事実のみを返す。
+/// 解が一意でない場合でも、どれか1つの解を表示するのではなく、
+/// 「どの解でも必ず成り立つ」セル・形状配置のみを返す。
+pub fn solve_lostspeech_facts(
+    markers: &[Vec<i8>],
+    invalid: &[Vec<bool>],
+    pieces: &[Vec<Vec<bool>>],
+) -> Option<LostSpeechSolveResult> {
+    run_solver(markers, invalid, pieces)
 }
 
 //---------------------------------------------------------------------------
@@ -702,83 +832,198 @@ mod tests {
 
     #[test]
     fn test_lostspeech_url() {
-        // https://puzz.link/p?lostspeech/3/2/64i7/2/21o/12o
-        let url = "https://puzz.link/p?lostspeech/3/2/64i700/2/21o/12o";
+        // ツイン盤面: マーカー + 4つのピース [青1, 赤1, 青2, 赤2]
+        let url = "https://puzz.link/p?lostspeech/2/3/6117h1g/4/12o/12o/21o/21o";
         let problem = deserialize_problem(url).unwrap();
-        assert_eq!(problem.0.len(), 2);
-        assert_eq!(problem.0[0].len(), 3);
+        assert_eq!(problem.0.len(), 3);
+        assert_eq!(problem.0[0].len(), 2);
         assert_eq!(problem.0[0][0], 6);
-        assert_eq!(problem.0[0][1], 4);
-        assert_eq!(problem.0[1][2], 7);
-        assert_eq!(problem.2.len(), 2);
-        assert_eq!(problem.2[0], vec![vec![true, true]]);
-        assert_eq!(
-            problem.2[1],
-            vec![vec![true], vec![true]]
-        );
+        assert_eq!(problem.0[0][1], 1);
+        assert_eq!(problem.0[1][0], 1);
+        assert_eq!(problem.0[1][1], 7);
+        assert_eq!(problem.1[2][0], true);
+        assert_eq!(problem.1[2][1], true);
+        assert_eq!(problem.2.len(), 4);
+        assert_eq!(problem.2[0], vec![vec![true], vec![true]]);
+        assert_eq!(problem.2[1], vec![vec![true], vec![true]]);
+        assert_eq!(problem.2[2], vec![vec![true, true]]);
+        assert_eq!(problem.2[3], vec![vec![true, true]]);
 
         let reserialized = serialize_problem(&problem).unwrap();
         let problem2 = deserialize_problem(&reserialized).unwrap();
         assert_eq!(problem.0, problem2.0);
+        assert_eq!(problem.1, problem2.1);
         assert_eq!(problem.2, problem2.2);
     }
 
     #[test]
-    fn test_lostspeech_chain_rule() {
-        // 5x1盤: 青起点 + 黒点が2つのドミノを強制する配置。
-        // ドミノ2つが離れている配置しか存在しない場合は解なしになる。
-        // markers: (0,0)=6起点, (0,1)=2, (0,2)=2, (0,3)=1黒点, (0,4)=1黒点
-        // 黒点(0,3),(0,4)を覆うドミノは(0,3),(0,4)のみ → 起点側と非連結
-        let problem = deserialize_problem(
-            "https://puzz.link/p?lostspeech/5/1/622110/1/21o",
-        )
-        .unwrap();
-        let ans = solve_lostspeech(&problem.0, &problem.1, &problem.2);
-        assert!(ans.is_none(), "disconnected chain must be rejected");
+    fn test_lostspeech_unique() {
+        // 4x4盤: 青起点(0,0), 赤起点(3,3), その他は空心点または無印。
+        // 盤面1: 2x2正方形×2 → 解は一意。
+        // 盤面2: Tテトリミノ×2 → 解は一意。
+        // 2つの解の形状は互いに完全に含まれないため、共同の解も一意。
+        let url = "https://puzz.link/p?lostspeech/4/4/622g222gh22g2270000/4/22u/22u/32t0/23eg";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
 
-        // 隣接する配置なら解ける: markers (0,0)=6, (0,1)=2, (0,2)=1, (0,3)=1, (0,4)=2
-        let problem2 = deserialize_problem(
-            "https://puzz.link/p?lostspeech/5/1/621120/1/21o",
-        )
-        .unwrap();
-        let ans2 = solve_lostspeech(&problem2.0, &problem2.1, &problem2.2);
-        assert!(ans2.is_some(), "adjacent chain must be solvable");
+        assert!(ans.is_unique);
+        assert!(ans.blue1_cells.iter().flatten().all(|v| v.is_some()));
+        assert!(ans.red1_cells.iter().flatten().all(|v| v.is_some()));
+        assert!(ans.blue2_cells.iter().flatten().all(|v| v.is_some()));
+        assert!(ans.red2_cells.iter().flatten().all(|v| v.is_some()));
+
+        // 盤面1: 2x2正方形
+        for &(y, x) in &[(0, 0), (0, 1), (1, 0), (1, 1)] {
+            assert_eq!(ans.blue1_cells[y][x], Some(true));
+        }
+        for &(y, x) in &[(2, 2), (2, 3), (3, 2), (3, 3)] {
+            assert_eq!(ans.red1_cells[y][x], Some(true));
+        }
+        // 盤面2: Tテトリミノ
+        for &(y, x) in &[(0, 0), (0, 1), (0, 2), (1, 1)] {
+            assert_eq!(ans.blue2_cells[y][x], Some(true));
+        }
+        for &(y, x) in &[(2, 2), (3, 1), (3, 2), (3, 3)] {
+            assert_eq!(ans.red2_cells[y][x], Some(true));
+        }
     }
 
     #[test]
-    fn test_lostspeech_user_puzzle_unsolvable() {
-        // T字形に分岐する配置の盤面。
-        // 「次の形状は直前の形状の隣にしか置けない」ため一筆書きの順序が
-        // 存在せず、解なしになる。
-        let url = "https://puzz.link/p?lostspeech/8/8/p1l311k6zx0000000000000/1/11g";
+    fn test_lostspeech_non_unique() {
+        // 4x4: 盤面1は2x2正方形×2 (一意)、盤面2は青=3連トロミノ (縦/横の2通り) +
+        // 赤=Tテトリミノ。盤面2の青に2つの置き方があるため非一意。
+        // (跨盤包含制約はすべて満たす: 正方形とトロミノ・Tは互いに包含しない)
+        let url = "https://puzz.link/p?lostspeech/4/4/6222222g2g22g2270000/4/22u/22u/13s/23eg";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech(&problem.0, &problem.1, &problem.2);
-        assert!(ans.is_none(), "branching chain must be rejected");
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
+
+        assert!(!ans.is_unique);
+        // 盤面1は確定
+        for &(y, x) in &[(0usize, 0usize), (0, 1), (1, 0), (1, 1)] {
+            assert_eq!(ans.blue1_cells[y][x], Some(true));
+        }
+        for &(y, x) in &[(2usize, 2usize), (2, 3), (3, 2), (3, 3)] {
+            assert_eq!(ans.red1_cells[y][x], Some(true));
+        }
+        // 盤面2の青は起点(0,0)だけが確定
+        assert_eq!(ans.blue2_cells[0][0], Some(true));
+        assert_eq!(ans.blue2_cells[1][0], None);
+        assert_eq!(ans.blue2_cells[0][1], None);
+        // 盤面2の赤Tは確定
+        for &(y, x) in &[(2usize, 2usize), (3, 1), (3, 2), (3, 3)] {
+            assert_eq!(ans.red2_cells[y][x], Some(true));
+        }
     }
 
     #[test]
-    fn test_lostspeech_strict_snake_solvable() {
-        // 蛇行する鎖(ユーザーの問題): 厳密チェーンで解ける
-        let url = "https://puzz.link/p?lostspeech/8/8/p1l1111i611117i212112j2111k1q0000000000000/2/11g/32bg";
+    fn test_lostspeech_within_board_containment_rejected() {
+        // 3x3: 青起点(0,0), 赤起点(1,1), 空心点(0,1),(1,0), 青赤点(0,2),(1,2)。
+        // 青の鎖: {(0,0),(0,1)} と {(0,2),(1,2)}、赤の鎖: {(1,0),(1,1)} と {(0,2),(1,2)}。
+        // 起点を含まない2つ目の形状どうしが同一セル集合のため、
+        // 盤面内の包含制約で解なしになる。
+        let url = "https://puzz.link/p?lostspeech/3/3/624274i00/4/12o/12o/12o/12o";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech_display(&problem.0, &problem.1, &problem.2);
-        assert!(ans.is_some(), "snaking chain must be solvable");
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2);
+        assert!(ans.is_none(), "contained shapes on the same board must be rejected");
     }
 
     #[test]
-    fn test_lostspeech_solve() {
-        // https://puzz.link/p?lostspeech/3/2/64g22700/2/21o/12o
-        let url = "https://puzz.link/p?lostspeech/3/2/642g2700/2/21o/12o";
+    fn test_lostspeech_start_not_counted_for_containment() {
+        // 3x3: 青起点(0,0), 赤起点(1,1), 空心点(0,1),(0,2),(1,0),(2,0)。
+        // 赤=単セル(1,1)は起点マスだけなので、青の2x2正方形に
+        // 含まれていても包含とみなさない → 解あり。
+        // (盤面2の青=3連トロミノは青の正方形と包含しないため、
+        //  跨盤包含制約も満たす)
+        let url = "https://puzz.link/p?lostspeech/3/3/62227g2h00/4/22u/11g/13s/11g";
         let problem = deserialize_problem(url).unwrap();
-        let ans = solve_lostspeech(&problem.0, &problem.1, &problem.2).unwrap();
-        let blue = ans.0;
-        let red = ans.1;
-        // 青の起点 (0,0) は必ず青
-        assert_eq!(blue[0][0], Some(true));
-        // 青赤点 (0,1) は必ず青と赤
-        assert_eq!(blue[0][1], Some(true));
-        assert_eq!(red[0][1], Some(true));
-        // 赤の起点 (1,2) は必ず赤
-        assert_eq!(red[1][2], Some(true));
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
+        assert_eq!(ans.blue1_cells[0][0], Some(true));
+        assert_eq!(ans.red1_cells[1][1], Some(true));
+        assert_eq!(ans.blue2_cells[0][0], Some(true));
+    }
+
+    #[test]
+    fn test_lostspeech_example() {
+        // ユーザー提供の例题 (8x8)。青起点(4,1), 青点(5,1)。赤起点なし。
+        // 盤面1: L形の鎖、盤面2: ドミノの鎖。
+        // 起点を含む形状は包含判定から除外されるため解が存在する。
+        // ただし空心点の覆い方に複数の選択肢があり、非一意。
+        let url = "https://puzz.link/p?lostspeech/8/8/y122j1111i611g11g23g2222w0000000000000/4/22e/22u/12o/22u";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
+
+        assert!(!ans.is_unique);
+        // 全黒点と起点・青点は両盤面とも確実に覆われる
+        for (name, cells) in [("blue1", &ans.blue1_cells), ("blue2", &ans.blue2_cells)] {
+            for &(y, x) in &[
+                (2usize, 3usize),
+                (3, 2),
+                (3, 3),
+                (3, 4),
+                (3, 5),
+                (4, 2),
+                (4, 3),
+                (4, 5),
+                (4, 6),
+                (4, 1), // 青起点
+                (5, 1), // 青点
+            ] {
+                assert_eq!(cells[y][x], Some(true), "{} ({},{}) must be covered", name, y, x);
+            }
+        }
+        // 赤は両盤面とも置かれない
+        assert!(ans.red1_cells.iter().flatten().all(|v| v == &Some(false)));
+        assert!(ans.red2_cells.iter().flatten().all(|v| v == &Some(false)));
+    }
+
+    #[test]
+    fn test_lostspeech_example2() {
+        // ユーザー提供の例题その2 (8x8)。青起点(3,1), 青点(4,1)。赤起点なし。
+        // 盤面1: ドミノの鎖、盤面2: L形の鎖。
+        // 起点を含む形状は包含判定から除外されるため、この例题は一意に解ける。
+        let url = "https://puzz.link/p?lostspeech/8/8/q12k1111i611g11g23g2222zk0000000000000/4/12o/22u/22e/22u";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2).unwrap();
+
+        assert!(ans.is_unique);
+        // 盤面1: ドミノの鎖
+        for &(y, x) in &[
+            (1usize, 3usize),
+            (2, 2),
+            (2, 3),
+            (2, 4),
+            (2, 5),
+            (3, 1),
+            (3, 2),
+            (3, 3),
+            (3, 5),
+            (3, 6),
+            (4, 1),
+            (4, 3),
+            (4, 5),
+            (4, 6),
+        ] {
+            assert_eq!(ans.blue1_cells[y][x], Some(true));
+        }
+        // 盤面2: L形の鎖
+        for &(y, x) in &[
+            (1usize, 3usize),
+            (1, 4),
+            (2, 2),
+            (2, 3),
+            (2, 4),
+            (2, 5),
+            (3, 1),
+            (3, 2),
+            (3, 3),
+            (3, 5),
+            (3, 6),
+            (4, 1),
+        ] {
+            assert_eq!(ans.blue2_cells[y][x], Some(true));
+        }
+        // 赤は両盤面とも置かれない
+        assert!(ans.red1_cells.iter().flatten().all(|v| v == &Some(false)));
+        assert!(ans.red2_cells.iter().flatten().all(|v| v == &Some(false)));
     }
 }

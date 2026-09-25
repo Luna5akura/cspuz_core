@@ -193,6 +193,71 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_lostspeech_shows_only_certain_facts() {
+        // 4x4ツイン盤: 盤面1は2x2正方形×2 (一意)、盤面2は青=3連トロミノ
+        // (縦/横の2通り) + 赤=Tテトリミノ。
+        // 盤面2の青の置き方が2通りあるため共同の解は非一意。
+        // ソルバー表示は「どの解でも成り立つ」内容のみを含む:
+        //  - 盤面1の2枚の正方形 (8マス) と盤面2の赤T (4マス) は確定
+        //  - 盤面2の青は起点(0,0)のみ確定
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech/4/4/6222222g2g22g2270000/4/22u/22u/13s/23eg",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], false);
+
+        let data = response["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            data.iter()
+                .filter(|e| e["item"].as_str() == Some("fill"))
+                .count(),
+            13,
+            "8 certain cells on board 1 + 5 on board 2: {}",
+            response
+        );
+        // 盤面2の青の不確定なマス (1,0) は塗られない
+        assert!(!data.iter().any(|e| {
+            e["item"].as_str() == Some("fill")
+                && e["x"].as_usize() == Some(23)
+                && e["y"].as_usize() == Some(3)
+        }));
+    }
+
+    #[test]
+    fn solve_problem_lostspeech_unique_shows_full_solution() {
+        // 一意に解ける4x4ツイン盤: 盤面1は2x2正方形2枚、盤面2はTテトリミノ2枚。
+        // ソルバー表示には両盤面の全形状 (計16マスの塗り) と境界線が含まれる。
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech/4/4/622g222gh22g2270000/4/22u/22u/32t0/23eg",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+
+        let data = response["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            data.iter()
+                .filter(|e| e["item"].as_str() == Some("fill"))
+                .count(),
+            16,
+            "all 16 shape cells must be certain: {}",
+            response
+        );
+        // 両盤面に境界線が描かれている
+        assert!(data.iter().any(|e| {
+            e["item"].as_str() == Some("wall") && e["x"].as_usize().unwrap() < 20
+        }));
+        assert!(data.iter().any(|e| {
+            e["item"].as_str() == Some("wall") && e["x"].as_usize().unwrap() >= 20
+        }));
+    }
+
+    #[test]
     fn solve_problem_dispatches_slovak_sums() {
         let response = solve_problem_json_from_bytes(
             b"https://puzz.link/p?slovak-sums/3/3/eyJudW1iZXJzIjpbMSwyXSwiY2VsbHMiOltbbnVsbCxudWxsLHsic3VtIjozLCJjb3VudCI6Mn1dLFtudWxsLHsic3VtIjo2LCJjb3VudCI6NH0sbnVsbF0sW3sic3VtIjozLCJjb3VudCI6Mn0sbnVsbCxudWxsXV19",
