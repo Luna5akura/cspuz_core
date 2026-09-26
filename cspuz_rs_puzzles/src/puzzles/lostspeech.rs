@@ -659,16 +659,19 @@ fn two_solutions_result(
 /// 解が一意でない場合でも、どれか1つの解を表示するのではなく、
 /// 「どの解でも必ず成り立つ」セル・形状配置のみを返す。
 ///
-/// variant=false (バリアントルール無効) の場合、左右の盤面は独立に同じ問題
-/// になる。このとき解がちょうど2つならば、左盤面に1つ目の解、
-/// 右盤面に2つ目の解を表示する。
+/// variant=false (バリアントルール無効) の場合、左右の盤面は独立に解かれる。
+/// バンクのピースが左右で同じ (両盤面が同じ問題になる) かつ解がちょうど
+/// 2つのときは、左盤面に1つ目の解、右盤面に2つ目の解を表示する。
 pub fn solve_lostspeech_facts(
     markers: &[Vec<i8>],
     invalid: &[Vec<bool>],
     pieces: &[Vec<Vec<bool>>],
     variant: bool,
 ) -> Option<LostSpeechSolveResult> {
-    if !variant {
+    // 両盤面が同じ問題になるのはバンクのピースが左右で同じ場合のみ。
+    // ピースが異なる場合はこの表示最適化を使わず、通常の確定事実を返す。
+    let same_boards = pieces.get(0) == pieces.get(2) && pieces.get(1) == pieces.get(3);
+    if !variant && same_boards {
         if let Some(sols) = enumerate_single_board(markers, invalid, pieces, 3) {
             if sols.len() == 2 {
                 return Some(two_solutions_result(&sols[0], &sols[1]));
@@ -810,7 +813,8 @@ fn square() -> Vec<Vec<bool>> {
 }
 
 fn domino() -> Vec<Vec<bool>> {
-    vec![vec![true, true]]
+    // pzprjs のプリセット "12o" (縦ドミノ) と同じ向き
+    vec![vec![true], vec![true]]
 }
 
 struct LostSpeechPieces;
@@ -823,20 +827,21 @@ impl Combinator<Vec<Vec<Vec<bool>>>> for LostSpeechPieces {
     ) -> Option<(usize, Vec<u8>)> {
         let data = &input[0];
 
-        if data == &vec![square()] {
+        // バンクは4ピース [青1, 赤1, 青2, 赤2]。pzprjs のプリセットと揃える。
+        if data == &vec![square(), square(), square(), square()] {
             return Some((1, b"//s".to_vec()));
         }
-        if data == &vec![domino()] {
+        if data == &vec![domino(), domino(), domino(), domino()] {
             return Some((1, b"//d".to_vec()));
+        }
+        if data.is_empty() {
+            return Some((1, b"//z".to_vec()));
         }
         if data == &vec![domino(), domino()] {
             return Some((1, b"//w".to_vec()));
         }
         if data == &vec![square(), square()] {
             return Some((1, b"//q".to_vec()));
-        }
-        if data.is_empty() {
-            return Some((1, b"//z".to_vec()));
         }
 
         let mut ret = vec![b'/'];
@@ -859,20 +864,27 @@ impl Combinator<Vec<Vec<Vec<bool>>>> for LostSpeechPieces {
     ) -> Option<(usize, Vec<Vec<Vec<Vec<bool>>>>)> {
         let mut sequencer = Sequencer::new(input);
 
+        // バンクは4ピース [青1, 赤1, 青2, 赤2]。pzprjs のプリセットと揃える。
         if sequencer.deserialize(ctx, Dict::new(0, "//s")).is_some() {
-            return Some((sequencer.n_read(), vec![vec![square()]]));
+            return Some((
+                sequencer.n_read(),
+                vec![vec![square(), square(), square(), square()]],
+            ));
         }
         if sequencer.deserialize(ctx, Dict::new(0, "//d")).is_some() {
-            return Some((sequencer.n_read(), vec![vec![domino()]]));
+            return Some((
+                sequencer.n_read(),
+                vec![vec![domino(), domino(), domino(), domino()]],
+            ));
+        }
+        if sequencer.deserialize(ctx, Dict::new(0, "//z")).is_some() {
+            return Some((sequencer.n_read(), vec![vec![]]));
         }
         if sequencer.deserialize(ctx, Dict::new(0, "//w")).is_some() {
             return Some((sequencer.n_read(), vec![vec![domino(), domino()]]));
         }
         if sequencer.deserialize(ctx, Dict::new(0, "//q")).is_some() {
             return Some((sequencer.n_read(), vec![vec![square(), square()]]));
-        }
-        if sequencer.deserialize(ctx, Dict::new(0, "//z")).is_some() {
-            return Some((sequencer.n_read(), vec![vec![]]));
         }
 
         sequencer.deserialize(ctx, Dict::new(0, "/"))?;
@@ -1008,6 +1020,65 @@ mod tests {
         assert_eq!(problem.0, problem2.0);
         assert_eq!(problem.1, problem2.1);
         assert_eq!(problem.2, problem2.2);
+    }
+
+    #[test]
+    fn test_lostspeech_preset_bank() {
+        // pzprjs のバンクプリセット: "//s" = 正方形4枚, "//d" = ドミノ4枚
+        let problem =
+            deserialize_problem("https://puzz.link/p?lostspeech/2/2/61170//d").unwrap();
+        assert_eq!(
+            problem.2,
+            vec![
+                vec![vec![true], vec![true]],
+                vec![vec![true], vec![true]],
+                vec![vec![true], vec![true]],
+                vec![vec![true], vec![true]],
+            ]
+        );
+        let problem =
+            deserialize_problem("https://puzz.link/p?lostspeech/2/2/61170//s").unwrap();
+        assert_eq!(
+            problem.2,
+            vec![
+                vec![vec![true, true], vec![true, true]],
+                vec![vec![true, true], vec![true, true]],
+                vec![vec![true, true], vec![true, true]],
+                vec![vec![true, true], vec![true, true]],
+            ]
+        );
+        // ラウンドトリップ
+        for url in [
+            "https://puzz.link/p?lostspeech/2/2/61170//d",
+            "https://puzz.link/p?lostspeech/2/2/61170//s",
+        ] {
+            let problem = deserialize_problem(url).unwrap();
+            let reserialized = serialize_problem(&problem).unwrap();
+            let problem2 = deserialize_problem(&reserialized).unwrap();
+            assert_eq!(problem.2, problem2.2);
+        }
+    }
+
+    #[test]
+    fn test_lostspeech_boards_with_different_pieces() {
+        // 左右の盤面でバンクのピースが異なる問題 (盤面1: ドミノ2枚、
+        // 盤面2: Lトロミノ+縦トロミノ)。盤面1には2つの解があるが、
+        // 「左右が同じ問題」ではないため二解分割表示を使わず、
+        // 確定事実を返す (盤面2は一意に確定する)。
+        let url = "https://puzz.link/p?lostspeech/8/8/h2222j8232j222aja229j9222j2a22j6127l1i0000000000000/4/12o/12o/22e/13s";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).unwrap();
+
+        assert!(!ans.is_unique);
+        // 盤面2は唯一の解が確定している
+        assert!(ans.blue2_cells.iter().flatten().all(|v| v.is_some()));
+        assert!(ans.red2_cells.iter().flatten().all(|v| v.is_some()));
+        // 盤面1は2つの解の共通部分のみが確定する
+        assert!(ans
+            .blue1_cells
+            .iter()
+            .flatten()
+            .any(|v| v.is_none() || !v.unwrap()));
     }
 
     #[test]

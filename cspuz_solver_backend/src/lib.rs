@@ -281,6 +281,53 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_lostspeech_boards_with_different_pieces() {
+        // 左右の盤面でバンクのピースが異なる問題。
+        // 盤面2 (Lトロミノ+トロミノ) は一意に確定し、盤面1 (ドミノ) は2解の
+        // 共通部分のみ確定する。「左右が同じ問題」ではないため二解分割表示は使わない。
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech/8/8/h2222j8232j222aja229j9222j2a22j6127l1i0000000000000/4/12o/12o/22e/13s",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+        assert_eq!(response["description"]["isUnique"], false);
+    }
+
+    #[test]
+    fn solve_problem_lostspeech_domino_preset_bank() {
+        // バンクプリセット "//d" (ドミノ4枚) のURLも受理する
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?lostspeech/8/8/x11111i8g49j1149j6aa7x0000000000000//d",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_ne!(
+            response["description"].as_str(),
+            Some("invalid url"),
+            "the //d bank preset must be accepted: {}",
+            response
+        );
+
+        // UIのsolverが付与する &variant=0/1 サフィックス付きでも受理する
+        for suffix in ["&variant=0", "&variant=1"] {
+            let response = solve_problem_json_from_bytes(
+                format!(
+                    "https://puzz.link/p?lostspeech/8/8/x11111i8g49j1149j6aa7x0000000000000//d{}",
+                    suffix
+                )
+                .as_bytes(),
+            );
+            let response = json::parse(&response).unwrap();
+            assert_ne!(
+                response["description"].as_str(),
+                Some("invalid url"),
+                "the //d bank preset with {} must be accepted: {}",
+                suffix,
+                response
+            );
+        }
+    }
+
+    #[test]
     fn solve_problem_lostspeech_accepts_pzpr_variant_segment() {
         // pzprの「v:バリアントID」セグメントを含むURLも受理する
         // (variantチェックボックスを有効にするとURLに v: が入る)

@@ -8,12 +8,19 @@ fn twin_offset(width: usize) -> usize {
 
 pub fn solve(url: &str) -> Result<Board, &'static str> {
     // 「this puzzle uses variant rule」: URL末尾の &variant=1 で跨盤包含ルールを有効化
+    // (UIのsolverは常に &variant=0/1 を付与するため、解析前に取り除く。
+    //  取り除かないとバンクプリセット "//d" が "d&variant=0" になり壊れる)
     let variant = url.ends_with("&variant=1");
+    let url = url
+        .strip_suffix("&variant=1")
+        .or_else(|| url.strip_suffix("&variant=0"))
+        .unwrap_or(url);
 
     // pzprのURLは「v:バリアントID」セグメントを含むことがある
     // (バリアントルールのチェックボックスとは別物)。solverでは不要なので除去する。
     // また "v:" 除去などで生じた空セグメント (二重スラッシュ) も除去する
     // (ただし "https://" のスキームの空セグメントは残す)。
+    // バンクのプリセット指定 "//<shortkey>" は除去しない。
     let cleaned = {
         let segs = url.split('/').collect::<Vec<_>>();
         let mut out = String::new();
@@ -23,7 +30,11 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                 prev_ends_colon = false;
                 continue;
             }
-            if seg.is_empty() && !prev_ends_colon {
+            let next_is_preset = matches!(
+                segs.get(i + 1).copied(),
+                Some("s") | Some("d") | Some("z") | Some("w") | Some("q")
+            );
+            if seg.is_empty() && !prev_ends_colon && !next_is_preset {
                 continue;
             }
             if i > 0 {
