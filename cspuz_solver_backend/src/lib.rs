@@ -238,6 +238,49 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_battleships() {
+        // 5x1: 2マス艦2隻 → 唯一解
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?battleships/5/1/lk/2/21o/21o");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+        let data = response["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            data.iter()
+                .filter(|e| e["item"].as_str() == Some("fill"))
+                .count(),
+            4,
+            "both ships must be certain: {}",
+            response
+        );
+    }
+
+    #[test]
+    fn solve_problem_dispatches_place_by_product() {
+        // 4x4: 2x2と1x4のピース → 唯一解
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?placebyproduct/4/4/22401133000000/2/22u/14u",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"), "{}", response);
+        assert_eq!(response["description"]["isUnique"], true);
+        let data = response["description"]["data"]
+            .members()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            data.iter()
+                .filter(|e| e["item"].as_str() == Some("fill"))
+                .count(),
+            8,
+            "all shape cells must be certain: {}",
+            response
+        );
+    }
+
+    #[test]
     fn solve_problem_lostspeech_accepts_pzpr_variant_segment() {
         // pzprの「v:バリアントID」セグメントを含むURLも受理する
         // (variantチェックボックスを有効にするとURLに v: が入る)

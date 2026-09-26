@@ -96,6 +96,7 @@ puzzle_list!(puzz_link,
     (ayeheya, ["ayeheya"], "Ekawayeh (Symmetry Heyawake)", "∀人∃ＨＥＹＡ"),
     (balloon, ["balloon"], "Balloon Box (Revised)", "風船箱 (改訂版)"),
     (barns, ["barns"], "Barns", "バーンズ"),
+    (battleships, ["battleships"], "Battleships", "Battleships"),
     (bosanowa, ["bosanowa"], "Bosanowa", "ボサノワ"),
     (castle_wall, ["castle"], "Castle Wall", "Castle Wall"),
     (cave, ["cave"], "Cave", "バッグ"),
@@ -176,6 +177,7 @@ puzzle_list!(puzz_link,
     (pencils, ["pencils"], "Pencils", "ペンシルズ"),
     (pentominous, ["pentominous"], "Pentominous", "Pentominous"),
     (pills, ["pills"], "Pills", "ピルズ"),
+    (place_by_product, ["placebyproduct"], "Place by Product", "Place by Product"),
     (putteria, ["putteria"], "Putteria", "プッテリア"),
     (reflect, ["reflect"], "Reflect Link", "リフレクトリンク"),
     (ringring, ["ringring"], "Ring-Ring", "リングリング"),
@@ -317,3 +319,4 @@ pub fn list_puzzles_for_enumerate() -> Vec<(String, String)> {
 pub fn list_penpa_edit_puzzles() -> Vec<(String, String, String)> {
     penpa_edit::list_puzzles_with_key()
 }
+

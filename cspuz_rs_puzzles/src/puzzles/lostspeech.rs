@@ -15,8 +15,11 @@ use cspuz_rs::solver::{any, count_true, Solver};
 //   青点      : 高々1つの青の形状 (赤なし)
 //   青赤点    : 青と赤が1つずつ
 //   赤点      : 高々1つの赤の形状 (青なし)
+//   青空心点  : 高々1つの形状 (青のみ)
+//   赤空心点  : 高々1つの形状 (赤のみ)
 // 青起点はちょうど1つ必要で、青の形状は青起点を覆う。赤起点は任意で、
 // ある場合は赤の形状が赤起点を覆う。赤起点が無い場合は赤の形状は置かない。
+// 起点マスはもう一方の色の図形に覆われてはいけない。
 // 同じ盤面内の青と赤は互いに完全に含まれない。さらに2つの解の間でも、
 // どの形状ももう一方の解のどの形状にも完全に含まれてはならない。
 pub type Problem = (Vec<Vec<i8>>, Vec<Vec<bool>>, Vec<Vec<Vec<bool>>>);
@@ -116,10 +119,10 @@ pub fn gen_placements(
                         let cy = y + dy;
                         let cx = x + dx;
                         // 形状のすべてのマスは「点」のあるマスでなければならない
-                        // (点: 1黒点 2空心点 3青点 4青赤点 8赤点。
+                        // (点: 1黒点 2空心点 3青点 4青赤点 8赤点 9青空心点 10赤空心点。
                         //  起点マス6/7は除く。三角マーク5は点ではないので覆えない)
                         let m = markers[cy][cx];
-                        !invalid[cy][cx] && (m == 1 || m == 2 || m == 3 || m == 4 || m == 6 || m == 7 || m == 8)
+                        !invalid[cy][cx] && (m == 1 || m == 2 || m == 3 || m == 4 || m == 6 || m == 7 || m == 8 || m == 9 || m == 10)
                     }) {
                         ret.push(
                             cells
@@ -273,6 +276,16 @@ fn add_marker_constraints(
                     solver.add_expr(r.clone());
                     solver.add_expr(!b);
                 }
+                9 => {
+                    // 青空心点: 高々1つの図形 (青のみ)
+                    solver.add_expr(count_true(vec![b.clone(), r.clone()]).le(1));
+                    solver.add_expr(!r);
+                }
+                10 => {
+                    // 赤空心点: 高々1つの図形 (赤のみ)
+                    solver.add_expr(count_true(vec![b.clone(), r.clone()]).le(1));
+                    solver.add_expr(!b);
+                }
                 _ => (),
             }
         }
@@ -416,6 +429,25 @@ fn run_solver(
     add_marker_constraints(&mut solver, blue1, red1, markers);
     add_marker_constraints(&mut solver, blue2, red2, markers);
 
+    // 起点マスはもう一方の色の図形に覆われてはいけない
+    for y in 0..h {
+        for x in 0..w {
+            match markers[y][x] {
+                6 => {
+                    // 青起点に赤の図形は置けない (両方の盤面)
+                    solver.add_expr(!red1.at((y, x)));
+                    solver.add_expr(!red2.at((y, x)));
+                }
+                7 => {
+                    // 赤起点に青の図形は置けない (両方の盤面)
+                    solver.add_expr(!blue1.at((y, x)));
+                    solver.add_expr(!blue2.at((y, x)));
+                }
+                _ => (),
+            }
+        }
+    }
+
     // 各盤面内で、青と赤の図形は互いに完全に含まれない
     add_no_containment(&mut solver, &p_blue1, &placements[0], &p_red1, &placements[1]);
     add_no_containment(&mut solver, &p_blue2, &placements[2], &p_red2, &placements[3]);
@@ -536,6 +568,18 @@ fn enumerate_single_board(
     }
 
     add_marker_constraints(&mut solver, blue, red, markers);
+
+    // 起点マスはもう一方の色の図形に覆われてはいけない
+    for y in 0..h {
+        for x in 0..w {
+            match markers[y][x] {
+                6 => solver.add_expr(!red.at((y, x))),
+                7 => solver.add_expr(!blue.at((y, x))),
+                _ => (),
+            }
+        }
+    }
+
     add_no_containment(&mut solver, &p_blue, &blue_placements, &p_red, &red_placements);
 
     let mut ret = vec![];
@@ -1038,9 +1082,120 @@ mod tests {
     }
 
     #[test]
+    fn test_lostspeech_hollow_colored_dots() {
+        // 3x1盤: (0,0)青起点 (1,0)青空心点 (2,0)黒点。バンクは4枚ともモノミノ。
+        // 青の鎖は (0,0) → (1,0) → (2,0) の順にしか伸ばせず、
+        // 2枚目が青空心点(1,0)を覆う (青のみ許される) 唯一の解になる。
+        let url = "https://puzz.link/p?lostspeech/3/1/6910/4/11g/11g/11g/11g";
+        let problem = deserialize_problem(url).unwrap();
+        assert_eq!(problem.0, vec![vec![6, 9, 1]]);
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).unwrap();
+
+        assert!(ans.is_unique);
+        // 青の鎖が3マスすべてを覆う (黒点(2,0)が2枚目の隣接先を強制する)
+        for x in 0..3 {
+            assert_eq!(ans.blue1_cells[0][x], Some(true));
+            assert_eq!(ans.blue2_cells[0][x], Some(true));
+        }
+        // 赤起点が無いので赤の図形は置かれない
+        assert!(ans.red1_cells.iter().flatten().all(|v| v == &Some(false)));
+        assert!(ans.red2_cells.iter().flatten().all(|v| v == &Some(false)));
+    }
+
+    #[test]
+    fn test_lostspeech_hollow_colored_dots_optional() {
+        // 2x2盤: (0,0)青起点 (1,0)青空心点 (0,1)赤空心点 (1,1)赤起点。
+        // バンクは4枚ともモノミノ。
+        // 青空心点・赤空心点は覆っても覆わなくてもよく、
+        // 覆う場合はそれぞれ自分の色でなければならない。
+        let url = "https://puzz.link/p?lostspeech/2/2/69a70/4/11g/11g/11g/11g";
+        let problem = deserialize_problem(url).unwrap();
+        assert_eq!(problem.0, vec![vec![6, 9], vec![10, 7]]);
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).unwrap();
+
+        // 起点を覆う1枚目は確定するが、空心色点の被覆は解によって異なる
+        assert!(!ans.is_unique);
+        assert_eq!(ans.blue1_cells[0][0], Some(true));
+        assert_eq!(ans.blue1_cells[0][1], None); // 青が青空心点を覆う/覆わない
+        assert_eq!(ans.blue1_cells[1][0], Some(false)); // 青が赤空心点を覆う解は無い
+        assert_eq!(ans.blue1_cells[1][1], Some(false));
+        assert_eq!(ans.red1_cells[1][1], Some(true));
+        assert_eq!(ans.red1_cells[1][0], None); // 赤が赤空心点を覆う/覆わない
+        assert_eq!(ans.red1_cells[0][1], Some(false)); // 赤が青空心点を覆う解は無い
+        assert_eq!(ans.red1_cells[0][0], Some(false));
+        // 盤面2は盤面1と独立に同じ解空間を持つ
+        assert_eq!(ans.blue2_cells[0][0], Some(true));
+        assert_eq!(ans.blue2_cells[0][1], None);
+        assert_eq!(ans.blue2_cells[1][0], Some(false));
+        assert_eq!(ans.blue2_cells[1][1], Some(false));
+        assert_eq!(ans.red2_cells[1][1], Some(true));
+        assert_eq!(ans.red2_cells[1][0], None);
+        assert_eq!(ans.red2_cells[0][1], Some(false));
+        assert_eq!(ans.red2_cells[0][0], Some(false));
+    }
+
+    #[test]
+    fn test_lostspeech_start_cells_not_covered_by_other_color() {
+        // 2x6盤: (0,0)青起点 (0,5)赤起点、その他は空心点。バンクはドミノ。
+        // 青の鎖は赤起点の手前で止まる解が存在する。どの解でも
+        // 起点マスがもう一方の色に覆われることはない。
+        let url = "https://puzz.link/p?lostspeech/2/6/622222222272000/4/12o/12o/12o/12o";
+        let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).unwrap();
+
+        // 青起点(0,0)はどの解でも赤に覆われない
+        assert_eq!(ans.red1_cells[0][0], Some(false));
+        assert_eq!(ans.red2_cells[0][0], Some(false));
+        // 赤起点(0,5)はどの解でも青に覆われない
+        assert_eq!(ans.blue1_cells[5][0], Some(false));
+        assert_eq!(ans.blue2_cells[5][0], Some(false));
+    }
+
+    #[test]
+    fn test_lostspeech_start_cross_coverage_rejected() {
+        // 2x6盤: (0,0)青起点 (0,3)赤空心点 (0,4)青点 (1,4)赤空心点 (0,5)赤起点。
+        // 青点(0,4)を覆う青のドミノは (0,4)-(0,5), (0,4)-(1,4), (0,3)-(0,4) の
+        // 3通りで、それぞれ赤起点・赤空心点・赤空心点を青が覆うためすべて不可。
+        // (旧ルールでは (0,4)-(0,5) が許されていたため解が存在した)
+        let url = "https://puzz.link/p?lostspeech/2/6/622222a23a72000/4/12o/12o/12o/12o";
+        let problem = deserialize_problem(url).unwrap();
+        for variant in [false, true] {
+            let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, variant);
+            assert!(
+                ans.is_none(),
+                "blue shapes must not cover the red start cell (variant={})",
+                variant
+            );
+        }
+    }
+
+    #[test]
+    fn test_lostspeech_hollow_colored_dots_wrong_color_rejected() {
+        // 4x1盤: (0,0)青起点 (0,1)赤起点 (0,2)青空心点 (0,3)赤点。バンクはドミノ。
+        // 赤の1枚目は赤起点(0,1)を覆う必要があるが、
+        //   (0,1)-(0,2) → 青空心点(0,2)を赤が覆うため不可
+        //   (0,0)-(0,1) → 青起点は覆えるが、赤点(0,3)を覆う赤が置けない
+        //   (赤点を覆うドミノは (0,2)-(0,3) しかなく青空心点に触れる)
+        // 青も赤点を覆えないため、解なしになる。
+        let url = "https://puzz.link/p?lostspeech/4/1/67980/4/12o/12o/12o/12o";
+        let problem = deserialize_problem(url).unwrap();
+        assert_eq!(problem.0, vec![vec![6, 7, 9, 8]]);
+        for variant in [false, true] {
+            let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, variant);
+            assert!(
+                ans.is_none(),
+                "red shapes must not cover hollow blue dots (variant={})",
+                variant
+            );
+        }
+    }
+
+    #[test]
     fn test_lostspeech_start_cells_count_for_containment() {
         // 3x3: 青起点(0,0), 赤起点(1,1), 空心点(0,1),(0,2),(1,0),(2,0)。
-        // 赤=単セル(1,1)が青の2x2正方形に完全に含まれる (起点豁免なし) → 解なし。
+        // 青起点を覆う2x2正方形は赤起点(1,1)を含んでしまうため、
+        // 「起点はもう一方の色に覆われない」ルールで解なしになる
+        // (旧ルールでは包含制約のみがこれを拒否していた)。
         let url = "https://puzz.link/p?lostspeech/3/3/62227g2h00/4/22u/11g/13s/11g";
         let problem = deserialize_problem(url).unwrap();
         let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true);

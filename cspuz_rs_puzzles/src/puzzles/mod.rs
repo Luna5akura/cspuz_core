@@ -1,3 +1,4 @@
+pub mod battleships;
 pub mod akari;
 pub mod akari_regions;
 pub mod akari_rgb;
@@ -94,6 +95,7 @@ pub mod nuritwin;
 pub mod parrot_loop;
 pub mod pencils;
 pub mod pills;
+pub mod place_by_product;
 pub mod polyominous;
 pub mod putteria;
 pub mod reflect;
