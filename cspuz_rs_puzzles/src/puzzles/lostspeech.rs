@@ -20,7 +20,8 @@ use cspuz_rs::solver::{any, count_true, Solver};
 // 青起点はちょうど1つ必要で、青の形状は青起点を覆う。赤起点は任意で、
 // ある場合は赤の形状が赤起点を覆う。赤起点が無い場合は赤の形状は置かない。
 // 起点マスはもう一方の色の図形に覆われてはいけない。
-// 同じ盤面内の青と赤は互いに完全に含まれない。さらに2つの解の間でも、
+// 同じ盤面内の青と赤は重なってもよい (互いに完全に含まれてもよい)。
+// 「this puzzle uses variant rule」が有効な場合のみ、2つの解の間でも、
 // どの形状ももう一方の解のどの形状にも完全に含まれてはならない。
 pub type Problem = (Vec<Vec<i8>>, Vec<Vec<bool>>, Vec<Vec<Vec<bool>>>);
 
@@ -448,10 +449,7 @@ fn run_solver(
         }
     }
 
-    // 各盤面内で、青と赤の図形は互いに完全に含まれない
-    add_no_containment(&mut solver, &p_blue1, &placements[0], &p_red1, &placements[1]);
-    add_no_containment(&mut solver, &p_blue2, &placements[2], &p_red2, &placements[3]);
-
+    // 同じ盤面内の青と赤は互いに完全に含まれてもよい。
     // 「this puzzle uses variant rule」が有効な場合のみ、
     // 左右の盤面の間でもどの図形ももう一方の解のどの図形にも
     // 完全に含まれてはいけない
@@ -580,7 +578,7 @@ fn enumerate_single_board(
         }
     }
 
-    add_no_containment(&mut solver, &p_blue, &blue_placements, &p_red, &red_placements);
+    // 同じ盤面内の青と赤は互いに完全に含まれてもよい (包含制約は置かない)
 
     let mut ret = vec![];
     for ans in solver.answer_iter() {
@@ -1141,15 +1139,37 @@ mod tests {
     }
 
     #[test]
-    fn test_lostspeech_within_board_containment_rejected() {
+    fn test_lostspeech_within_board_containment_allowed() {
         // 3x3: 青起点(0,0), 赤起点(1,1), 空心点(0,1),(1,0), 青赤点(0,2),(1,2)。
         // 青の鎖: {(0,0),(0,1)} と {(0,2),(1,2)}、赤の鎖: {(1,0),(1,1)} と {(0,2),(1,2)}。
-        // 起点を含まない2つ目の形状どうしが同一セル集合のため、
-        // 盤面内の包含制約で解なしになる。
+        // 起点を含まない2つ目の形状どうしは同一セル集合だが、
+        // 同じ盤面内の青と赤の包含は許されるため解が存在する。
         let url = "https://puzz.link/p?lostspeech/3/3/624274i00/4/12o/12o/12o/12o";
         let problem = deserialize_problem(url).unwrap();
+        let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, false).unwrap();
+
+        assert!(ans.is_unique);
+        // 青: {(0,0),(1,0)} と {(2,0),(2,1)}、赤: {(0,1),(1,1)} と {(2,0),(2,1)}
+        // (2つ目の形状どうしが同一セル集合 = 盤面内の包含、これは許される)
+        // (cells[y][x] のため (x, y) の順で記す)
+        for &(x, y) in &[(0usize, 0usize), (1, 0), (2, 0), (2, 1)] {
+            assert_eq!(ans.blue1_cells[y][x], Some(true));
+        }
+        for &(x, y) in &[(0usize, 1usize), (1, 1), (2, 0), (2, 1)] {
+            assert_eq!(ans.red1_cells[y][x], Some(true));
+        }
+
+        // 盤面2も同じ配置 (variant無効なので跨盤包含は検査されない)
+        for &(x, y) in &[(0usize, 0usize), (1, 0), (2, 0), (2, 1)] {
+            assert_eq!(ans.blue2_cells[y][x], Some(true));
+        }
+        for &(x, y) in &[(0usize, 1usize), (1, 1), (2, 0), (2, 1)] {
+            assert_eq!(ans.red2_cells[y][x], Some(true));
+        }
+
+        // variant有効時は、両盤面の同一形状どうしが跨盤包含になるため解なし
         let ans = solve_lostspeech_facts(&problem.0, &problem.1, &problem.2, true);
-        assert!(ans.is_none(), "contained shapes on the same board must be rejected");
+        assert!(ans.is_none(), "cross-board containment must still be rejected");
     }
 
     #[test]
