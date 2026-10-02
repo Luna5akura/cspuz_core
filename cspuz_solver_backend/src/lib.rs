@@ -193,6 +193,16 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_echo() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?echo/5/5/g1012030340i1202012010g1012020120i3403012010g",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+    }
+
+    #[test]
     fn solve_problem_lostspeech_shows_only_certain_facts() {
         // 4x4ツイン盤: 盤面1は2x2正方形×2 (一意)、盤面2は青=3連トロミノ
         // (縦/横の2通り) + 赤=Tテトリミノ。
