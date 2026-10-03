@@ -218,6 +218,7 @@ puzzle_list!(puzz_link,
     (yajilin_regions, ["yajilin-regions"], "Yajilin (Regions)", "ヘヤジリン"),
     (yajisoko, ["yajisoko"], "Yajisan-Sokoban", "やじさん倉庫番"),
     (yinyang, ["yinyang"], "Yin-Yang", "しろまるくろまる"),
+    (yinyang_mines, ["yinyangmines"], "Yin-Yang Mines", "Yin-Yang Mines"),
     (snaky_fillomino, ["snakyfillomino"], "Snaky Fillomino", "Snaky Fillomino"),
 );
 

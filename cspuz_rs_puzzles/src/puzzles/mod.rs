@@ -149,3 +149,4 @@ pub mod yajilin;
 pub mod yajilin_regions;
 pub mod yajisoko;
 pub mod yinyang;
+pub mod yinyang_mines;

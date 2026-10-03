@@ -261,6 +261,16 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_yinyang_mines() {
+        let response = solve_problem_json_from_bytes(
+            b"https://puzz.link/p?yinyangmines/5/5/2000009090085800909000000",
+        );
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+    }
+
+    #[test]
     fn solve_problem_dispatches_star_gazing() {
         let response =
             solve_problem_json_from_bytes(b"https://puzz.link/p?stargazing/5/5/1h2n1g2l2h2");
