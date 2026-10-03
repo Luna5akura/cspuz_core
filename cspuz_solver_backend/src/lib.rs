@@ -225,10 +225,13 @@ mod tests {
         // 3x2 board; the even digits 4/2/2/6 form a 2x2 block whose ring is
         // the only possible loop. The answer must be unique and the loop must
         // be reported as center-connecting "line" items on the borders.
+        // Coordinates must refer to the playable grid (no synthetic frame).
         let response =
             solve_problem_json_from_bytes(b"https://puzz.link/p?evenloopkakuro/3/2/o.68178");
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["height"].as_usize(), Some(2));
+        assert_eq!(response["description"]["width"].as_usize(), Some(3));
         assert_eq!(response["description"]["isUnique"], true);
 
         let data: Vec<_> = response["description"]["data"].members().collect();
@@ -240,11 +243,11 @@ mod tests {
         assert_eq!(
             numbers,
             vec![
-                (3, 3, "4"),
-                (3, 5, "2"),
-                (3, 7, "1"),
-                (5, 3, "2"),
-                (5, 5, "6")
+                (1, 1, "4"),
+                (1, 3, "2"),
+                (1, 5, "1"),
+                (3, 1, "2"),
+                (3, 3, "6")
             ]
         );
 
@@ -254,7 +257,7 @@ mod tests {
             .map(|d| (d["y"].as_usize().unwrap(), d["x"].as_usize().unwrap()))
             .collect();
         lines.sort();
-        assert_eq!(lines, vec![(3, 4), (4, 3), (4, 5), (5, 4)]);
+        assert_eq!(lines, vec![(1, 2), (2, 1), (2, 3), (3, 2)]);
     }
 
     #[test]
