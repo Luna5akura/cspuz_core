@@ -221,6 +221,43 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_even_loop_kakuro_3x2() {
+        // 3x2 board; the even digits 4/2/2/6 form a 2x2 block whose ring is
+        // the only possible loop. The answer must be unique and the loop must
+        // be reported as center-connecting "line" items on the borders.
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?evenloopkakuro/3/2/o.68178");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+
+        let data: Vec<_> = response["description"]["data"].members().collect();
+        let numbers: Vec<_> = data
+            .iter()
+            .filter(|d| d["color"].as_str() == Some("green") && d["item"]["kind"].as_str() == Some("text"))
+            .map(|d| (d["y"].as_usize().unwrap(), d["x"].as_usize().unwrap(), d["item"]["data"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            numbers,
+            vec![
+                (3, 3, "4"),
+                (3, 5, "2"),
+                (3, 7, "1"),
+                (5, 3, "2"),
+                (5, 5, "6")
+            ]
+        );
+
+        let mut lines: Vec<_> = data
+            .iter()
+            .filter(|d| d["color"].as_str() == Some("green") && d["item"].as_str() == Some("line"))
+            .map(|d| (d["y"].as_usize().unwrap(), d["x"].as_usize().unwrap()))
+            .collect();
+        lines.sort();
+        assert_eq!(lines, vec![(3, 4), (4, 3), (4, 5), (5, 4)]);
+    }
+
+    #[test]
     fn solve_problem_dispatches_star_gazing() {
         let response =
             solve_problem_json_from_bytes(b"https://puzz.link/p?stargazing/5/5/1h2n1g2l2h2");

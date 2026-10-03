@@ -41,7 +41,7 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                         x: x * 2 + 1,
                         color: "green",
                         kind: if b {
-                            ItemKind::BoldWall
+                            ItemKind::Line
                         } else {
                             ItemKind::Cross
                         },
@@ -55,7 +55,7 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                         x: x * 2 + 2,
                         color: "green",
                         kind: if b {
-                            ItemKind::BoldWall
+                            ItemKind::Line
                         } else {
                             ItemKind::Cross
                         },
