@@ -182,12 +182,12 @@ impl Combinator<Option<i32>> for KakuroNumCombinator {
 
 pub type Problem = Vec<Vec<Option<KakuroClue>>>;
 
-type IntermediateProblem = (
+pub type IntermediateProblem = (
     Vec<Vec<Option<(Option<i32>, Option<i32>)>>>,
     Vec<Option<i32>>,
 );
 
-fn combinator() -> impl Combinator<IntermediateProblem> {
+pub fn combinator() -> impl Combinator<IntermediateProblem> {
     Size::new(Tuple2::new(
         ContextBasedGrid::new(Choice::new(vec![
             Box::new(Optionalize::new(Tuple2::new(
@@ -201,7 +201,7 @@ fn combinator() -> impl Combinator<IntermediateProblem> {
     ))
 }
 
-pub fn serialize_problem(problem: &Problem) -> Option<String> {
+pub fn problem_to_intermediate(problem: &Problem) -> Option<IntermediateProblem> {
     let (h, w) = util::infer_shape(problem);
     if !(h >= 2 && w >= 2) {
         return None;
@@ -232,17 +232,22 @@ pub fn serialize_problem(problem: &Problem) -> Option<String> {
         }
     }
 
+    Some((intermediate_grid, rem_seq))
+}
+
+pub fn serialize_problem(problem: &Problem) -> Option<String> {
+    let (h, w) = util::infer_shape(problem);
     problem_to_url_with_context(
         combinator(),
         "kakuro",
-        (intermediate_grid, rem_seq),
+        problem_to_intermediate(problem)?,
         &Context::sized(h - 1, w - 1),
     )
 }
 
-type IntermediateGrid = Vec<Vec<Option<(Option<i32>, Option<i32>)>>>;
+pub type IntermediateGrid = Vec<Vec<Option<(Option<i32>, Option<i32>)>>>;
 
-fn problem_from_intermediate(
+pub fn problem_from_intermediate(
     intermediate_grid: IntermediateGrid,
     rem_seq: Vec<Option<i32>>,
 ) -> Option<Problem> {

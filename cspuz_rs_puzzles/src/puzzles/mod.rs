@@ -33,6 +33,7 @@ pub mod domino_search;
 pub mod doppelblock;
 pub mod double_lits;
 pub mod echo;
+pub mod even_loop_kakuro;
 pub mod energywalk;
 pub mod evolmino;
 pub mod exercise;
