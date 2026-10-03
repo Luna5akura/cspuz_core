@@ -2,7 +2,7 @@ use crate::util;
 use cspuz_rs::complex_constraints::sum_all_different;
 use cspuz_rs::graph;
 use cspuz_rs::serializer::{problem_to_url_with_context, url_to_problem, Context};
-use cspuz_rs::solver::{any, IntVarArray1D, Solver};
+use cspuz_rs::solver::{any, FromModel, IntVarArray1D, Solver};
 
 use super::kakuro::{self, KakuroClue, Problem};
 
@@ -275,6 +275,75 @@ mod tests {
         solver.add_answer_key_bool(&is_line.vertical);
         add_even_loop_constraints(&mut solver, numbers, is_line, h, w);
         assert!(!solver.solve().is_some());
+    }
+
+    #[test]
+    fn test_even_loop_kakuro_concave_loop() {
+        // A concave (staircase-shaped) loop must be accepted. The loop only
+        // needs to be a single closed loop without branching or crossing;
+        // convexity is not required.
+        //
+        //   2 4 6 8
+        //   8 1 3 6
+        //   6 9 2 4
+        //   4 2 8 1
+        let h = 6usize;
+        let w = 6usize;
+        let mut solver = Solver::new();
+        let numbers = &solver.int_var_2d((h, w), 0, 9);
+        solver.add_answer_key_int(numbers);
+        let answer = [
+            [0, 0, 0, 0, 0, 0],
+            [0, 2, 4, 6, 8, 0],
+            [0, 8, 1, 3, 6, 0],
+            [0, 6, 9, 2, 4, 0],
+            [0, 4, 2, 8, 1, 0],
+            [0, 0, 0, 0, 0, 0],
+        ];
+        for y in 0..h {
+            for x in 0..w {
+                solver.add_expr(numbers.at((y, x)).eq(answer[y][x]));
+            }
+        }
+        let is_line = &graph::BoolGridEdges::new(&mut solver, (h, w));
+        solver.add_answer_key_bool(&is_line.horizontal);
+        solver.add_answer_key_bool(&is_line.vertical);
+        add_even_loop_constraints(&mut solver, numbers, is_line, h, w);
+        let model = solver.solve();
+        assert!(model.is_some());
+        let lines = is_line.from_model(&model.unwrap());
+
+        // The staircase cycle: 12 edges around the concave shape
+        //   (0,0)-(0,1)-(0,2)-(0,3)-(1,3)-(2,3)-(2,2)
+        //        -(3,2)-(3,1)-(3,0)-(2,0)-(1,0)-(0,0)
+        let expected: [(usize, usize); 6] = [
+            // (y, x) in playable coords: horizontal edges
+            (2, 1),
+            (2, 4),
+            (3, 1),
+            (3, 4),
+            (4, 1),
+            (4, 3),
+        ];
+        for (y, x) in expected.iter() {
+            assert!(lines.horizontal[*y][*x]);
+        }
+        for (y, x) in [(1, 2), (1, 3), (1, 4), (3, 4), (4, 2), (4, 3)].iter() {
+            assert!(lines.vertical[*y][*x]);
+        }
+        // every other interior edge is off
+        let mut total = 0;
+        for y in 1..h {
+            for x in 1..w {
+                if lines.horizontal[y][x] {
+                    total += 1;
+                }
+                if lines.vertical[y][x] {
+                    total += 1;
+                }
+            }
+        }
+        assert_eq!(total, 12);
     }
 
     #[test]
