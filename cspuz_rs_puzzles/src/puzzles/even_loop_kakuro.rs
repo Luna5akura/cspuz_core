@@ -353,3 +353,26 @@ mod tests {
         util::tests::serializer_test(problem, url, serialize_problem, deserialize_problem);
     }
 }
+
+#[cfg(test)]
+mod unsat_tests {
+    use super::*;
+
+    #[test]
+    fn test_even_loop_kakuro_unsat_topright() {
+        // This puzzle is unsolvable:
+        // - The right run (0,5),(0,6),(0,7) sums to 7 with (0,7)=1 forced,
+        //   so (0,5),(0,6) = {2,4} are even and on the loop.
+        // - Their only loop exits force (1,5),(1,6) to be even as well.
+        // - The left run (0,0)..(0,3) sums to 23 (odd), so it cannot be all
+        //   odd (even sum) and cannot have a single even (that cell would
+        //   have degree at most 1), forcing three evens whose loop must
+        //   connect to the top-right block through the rest of the board.
+        // - Every run may contain at most 4 even digits (2,4,6,8 without
+        //   repetition), and the bottom-left corner ends up unable to reach
+        //   degree 2 while the wall at (7,3) blocks the bottom row.
+        let url = "https://puzz.link/p?evenloopkakuro/8/8/n-7t.zzu.n------1D-------/";
+        let problem = deserialize_problem(url).expect("deserialize");
+        assert!(solve_even_loop_kakuro(&problem).is_none());
+    }
+}
