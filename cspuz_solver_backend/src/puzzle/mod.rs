@@ -196,6 +196,7 @@ puzzle_list!(puzz_link,
     (slovak_sums, ["slovak-sums", "slovaksums", "slovak"], "Slovak Sums", "Slovak Sums"),
     (square_jam, ["squarejam"], "Square Jam", "Square Jam"),
     (star_battle, ["starbattle"], "Star Battle", "スターバトル"),
+    (star_gazing, ["stargazing"], "Star Gazing", "Star Gazing"),
     (statue_park, ["statuepark"], "Statue Park", "Statue Park"),
     (shape_minesweeper, ["shapeminesweeper", "shape-minesweeper", "shape-minesweep"], "Shape Minesweeper", "Shape Minesweeper"),
     (wolves_and_sheep, ["wolvesandsheepfences", "wolves-and-sheep-fences"], "Wolves and Sheep Fences", "Wolves and Sheep Fences"),
@@ -216,6 +217,7 @@ puzzle_list!(puzz_link,
     (yajilin_regions, ["yajilin-regions"], "Yajilin (Regions)", "ヘヤジリン"),
     (yajisoko, ["yajisoko"], "Yajisan-Sokoban", "やじさん倉庫番"),
     (yinyang, ["yinyang"], "Yin-Yang", "しろまるくろまる"),
+    (snaky_fillomino, ["snakyfillomino"], "Snaky Fillomino", "Snaky Fillomino"),
 );
 
 #[rustfmt::skip]
@@ -320,4 +322,3 @@ pub fn list_puzzles_for_enumerate() -> Vec<(String, String)> {
 pub fn list_penpa_edit_puzzles() -> Vec<(String, String, String)> {
     penpa_edit::list_puzzles_with_key()
 }
-

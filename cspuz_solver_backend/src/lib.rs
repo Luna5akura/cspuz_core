@@ -203,6 +203,24 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_snaky_fillomino() {
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?snakyfillomino/5/5/91l3g4g1i24m");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+    }
+
+    #[test]
+    fn solve_problem_dispatches_star_gazing() {
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?stargazing/5/5/1h2n1g2l2h2");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+    }
+
+    #[test]
     fn solve_problem_lostspeech_shows_only_certain_facts() {
         // 4x4ツイン盤: 盤面1は2x2正方形×2 (一意)、盤面2は青=3連トロミノ
         // (縦/横の2通り) + 赤=Tテトリミノ。
@@ -381,7 +399,8 @@ mod tests {
             .members()
             .collect::<Vec<_>>();
         assert_eq!(
-            data2.iter()
+            data2
+                .iter()
                 .filter(|e| e["item"].as_str() == Some("fill"))
                 .count(),
             4,
@@ -429,12 +448,12 @@ mod tests {
             response
         );
         // 両盤面に境界線が描かれている
-        assert!(data.iter().any(|e| {
-            e["item"].as_str() == Some("wall") && e["x"].as_usize().unwrap() < 20
-        }));
-        assert!(data.iter().any(|e| {
-            e["item"].as_str() == Some("wall") && e["x"].as_usize().unwrap() >= 20
-        }));
+        assert!(data
+            .iter()
+            .any(|e| { e["item"].as_str() == Some("wall") && e["x"].as_usize().unwrap() < 20 }));
+        assert!(data
+            .iter()
+            .any(|e| { e["item"].as_str() == Some("wall") && e["x"].as_usize().unwrap() >= 20 }));
     }
 
     #[test]
