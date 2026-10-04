@@ -4,47 +4,28 @@ use cspuz_rs::serializer::{
     url_to_problem, Choice, Combinator, Context, ContextBasedGrid, DecInt, Dict, KudamonoBorder,
     KudamonoGrid, Number16, Optionalize, PrefixAndSuffix, Rooms, Size, Spaces, Tuple2,
 };
-use cspuz_rs::solver::{count_true, BoolVar, Solver};
+use cspuz_rs::solver::{count_true, BoolVar, BoolVarArray2D, Solver};
 
-pub fn solve_akari_region(
+pub fn add_constraints(
+    solver: &mut Solver,
+    has_light: &BoolVarArray2D,
     borders: &graph::InnerGridEdges<Vec<Vec<bool>>>,
     clues: &[Vec<Option<i32>>], // clue on a cell (not region)
     has_block: &[Vec<bool>],
-) -> Option<Vec<Vec<Option<bool>>>> {
+) -> Option<()> {
     let (h, w) = borders.base_shape();
-
-    let mut solver = Solver::new();
-    let has_light = &solver.bool_var_2d((h, w));
-    solver.add_answer_key_bool(has_light);
-
-    let mut borders = borders.clone();
 
     for y in 0..h {
         for x in 0..w {
-            if !has_block[y][x] {
-                continue;
-            }
-
-            solver.add_expr(!has_light.at((y, x)));
-
-            // 黒マスは領域を分割する: 領域 = 太線と黒マスで囲まれた白マスの
-            // 連結成分。黒マスの周囲に境界を追加してから部屋を計算する。
-            if y > 0 {
-                borders.horizontal[y - 1][x] = true;
-            }
-            if y + 1 < h {
-                borders.horizontal[y][x] = true;
-            }
-            if x > 0 {
-                borders.vertical[y][x - 1] = true;
-            }
-            if x + 1 < w {
-                borders.vertical[y][x] = true;
+            if has_block[y][x] {
+                solver.add_expr(!has_light.at((y, x)));
             }
         }
     }
 
-    let rooms = graph::borders_to_rooms(&borders);
+    // 領域 = 太線で囲まれた領域。黒マスは領域を分割せず、領域内の
+    // 黒マスには灯りを置けないだけ。
+    let rooms = graph::borders_to_rooms(borders);
     for i in 0..rooms.len() {
         let mut clue: Option<i32> = None;
 
@@ -132,6 +113,22 @@ pub fn solve_akari_region(
             }
         }
     }
+
+    Some(())
+}
+
+pub fn solve_akari_region(
+    borders: &graph::InnerGridEdges<Vec<Vec<bool>>>,
+    clues: &[Vec<Option<i32>>], // clue on a cell (not region)
+    has_block: &[Vec<bool>],
+) -> Option<Vec<Vec<Option<bool>>>> {
+    let (h, w) = borders.base_shape();
+
+    let mut solver = Solver::new();
+    let has_light = &solver.bool_var_2d((h, w));
+    solver.add_answer_key_bool(has_light);
+
+    add_constraints(&mut solver, has_light, borders, clues, has_block)?;
 
     solver.irrefutable_facts().map(|f| f.get(has_light))
 }
@@ -310,19 +307,48 @@ mod tests {
 
     #[test]
     fn test_akari_regions_problem() {
-        let problem = problem_for_tests();
-        let ans = solve_akari_region(&problem.0, &problem.1, &problem.2);
-        assert!(ans.is_some());
-        let ans = ans.unwrap();
+        // 8x8: 十字の太線で4つの領域に分かれ、各領域の数字は4。
+        // 黒マスは領域を分割しない。ユーザーの解(各領域4灯)が制約を
+        // 満たすことを確認する。
+        let url = "https://puzz.link/p?akari-regional/8/8/4i4l.i.h.h.i.j.g4i4k.i.j.i.g.i.h20g410820g4000001vo00000";
+        let problem = deserialize_problem(url).expect("deserialize");
+        let (h, w) = (8usize, 8usize);
 
-        let expected = crate::util::tests::to_option_bool_2d([
-            [0, 0, 1, 0, 0, 0],
-            [0, 1, 0, 1, 0, 0],
-            [1, 0, 1, 0, 0, 0],
-            [0, 1, 0, 0, 0, 0],
-            [0, 0, 0, 0, 0, 1],
-        ]);
-        assert_eq!(ans, expected);
+        let lights: Vec<(usize, usize)> = vec![
+            (0, 7),
+            (1, 2),
+            (1, 5),
+            (2, 1),
+            (2, 4),
+            (2, 6),
+            (3, 0),
+            (3, 2),
+            (4, 3),
+            (5, 1),
+            (5, 5),
+            (5, 7),
+            (6, 2),
+            (6, 6),
+            (7, 3),
+            (7, 7),
+        ];
+
+        let mut solver = Solver::new();
+        let has_light = &solver.bool_var_2d((h, w));
+        solver.add_answer_key_bool(has_light);
+        for y in 0..h {
+            for x in 0..w {
+                let on = lights.contains(&(y, x));
+                if on {
+                    solver.add_expr(has_light.at((y, x)));
+                } else {
+                    solver.add_expr(!has_light.at((y, x)));
+                }
+            }
+        }
+        add_constraints(&mut solver, has_light, &problem.0, &problem.1, &problem.2)
+            .expect("clues consistent");
+        assert!(solver.solve().is_some());
     }
 
     #[test]

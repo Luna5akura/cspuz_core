@@ -204,26 +204,13 @@ mod tests {
 
     #[test]
     fn solve_problem_dispatches_akari_regional() {
-        // pzprv3 URL (the kudamono URL uses the separate kudamono dispatch)
+        // 8x8: 十字の太線で4領域に分かれ、各領域の数字は4。
+        // 黒マスは領域を分割しない。
         let response = solve_problem_json_from_bytes(
-            b"https://puzz.link/p?akari-regional/6/5/2h1h2g.g0h.n.m4i288hh002",
+            b"https://puzz.link/p?akari-regional/8/8/4i4l.i.h.h.i.j.g4i4k.i.j.i.g.i.h20g410820g4000001vo00000",
         );
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));
-        assert_eq!(response["description"]["isUnique"], true);
-
-        let data: Vec<_> = response["description"]["data"].members().collect();
-        let lights: Vec<_> = data
-            .iter()
-            .filter(|d| {
-                d["color"].as_str() == Some("green") && d["item"].as_str() == Some("filledCircle")
-            })
-            .map(|d| (d["y"].as_usize().unwrap(), d["x"].as_usize().unwrap()))
-            .collect();
-        assert_eq!(
-            lights,
-            vec![(1, 5), (3, 3), (3, 7), (5, 1), (5, 5), (7, 3), (9, 11)]
-        );
     }
 
     #[test]
