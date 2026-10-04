@@ -253,6 +253,12 @@ puzzle_list!(penpa_edit,
 pub mod double_lits;
 
 pub fn dispatch_puzz_link(puzzle_kind: &str, url: &str) -> Option<Result<Board, &'static str>> {
+    // akari_regions は kudamono リストに登録されているが、pzprv3 形式の URL
+    // も受け付けるため puzz.link 側でも直接ディスパッチする
+    if puzzle_kind == "akari-regional" {
+        return Some(akari_regions::solve(url));
+    }
+
     puzz_link::dispatch(puzzle_kind, url)
 }
 

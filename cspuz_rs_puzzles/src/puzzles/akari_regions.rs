@@ -1,7 +1,8 @@
 use cspuz_rs::graph;
 use cspuz_rs::serializer::{
-    get_kudamono_url_info_detailed, parse_kudamono_dimension, Choice, Combinator, Context, DecInt,
-    Dict, KudamonoBorder, KudamonoGrid, Optionalize, PrefixAndSuffix,
+    get_kudamono_url_info_detailed, parse_kudamono_dimension, problem_to_url_with_context,
+    url_to_problem, Choice, Combinator, Context, ContextBasedGrid, DecInt, Dict, KudamonoBorder,
+    KudamonoGrid, Optionalize, PrefixAndSuffix, Rooms, Size, Spaces, Tuple2,
 };
 use cspuz_rs::solver::{count_true, BoolVar, Solver};
 
@@ -26,6 +27,8 @@ pub fn solve_akari_region(
 
             solver.add_expr(!has_light.at((y, x)));
 
+            // 黒マスは領域を分割する: 領域 = 太線と黒マスで囲まれた白マスの
+            // 連結成分。黒マスの周囲に境界を追加してから部屋を計算する。
             if y > 0 {
                 borders.horizontal[y - 1][x] = true;
             }
@@ -139,7 +142,159 @@ pub type Problem = (
     Vec<Vec<bool>>,
 );
 
+//------------------------------------------------------------------------------
+// pzprv3 URL format:
+//   akari-regional/cols/rows/<cells>/<borders>
+// <cells> encodes each cell with the pzpr "number16" scheme:
+//   "."   = black cell (qnum = -2)
+//   hex   = region number on a white cell
+//   run   = ordinary white cells
+// <borders> uses the standard pzpr border encoding (base-32, 5 cells/char).
+//------------------------------------------------------------------------------
+
+/// pzpr の writeNumber16/readNumber16 と互換の数字コンビネータ
+struct Number16;
+
+impl Combinator<i32> for Number16 {
+    fn serialize(&self, _ctx: &Context, input: &[i32]) -> Option<(usize, Vec<u8>)> {
+        if input.is_empty() {
+            return None;
+        }
+        let v = input[0];
+        if !(0..=1126351).contains(&v) {
+            return None;
+        }
+        let ret = if v < 16 {
+            vec![to_hex(v)]
+        } else if v < 256 {
+            format!("-{:02x}", v).into_bytes()
+        } else if v < 4096 {
+            format!("+{:03x}", v).into_bytes()
+        } else if v < 8192 {
+            format!("={:03x}", v - 4096).into_bytes()
+        } else if v < 12240 {
+            format!("%{:03x}", v - 8192).into_bytes()
+        } else if v < 77776 {
+            format!("*{:04x}", v - 12240).into_bytes()
+        } else {
+            format!("${:05x}", v - 77776).into_bytes()
+        };
+        Some((1, ret))
+    }
+
+    fn deserialize(&self, _ctx: &Context, input: &[u8]) -> Option<(usize, Vec<i32>)> {
+        if input.is_empty() {
+            return None;
+        }
+        let c = input[0] as char;
+        let hex2 = |s: &[u8]| -> Option<i32> {
+            let text = std::str::from_utf8(&s[1..3]).ok()?;
+            i32::from_str_radix(text, 16).ok()
+        };
+        let hex3 = |s: &[u8]| -> Option<i32> {
+            let text = std::str::from_utf8(&s[1..4]).ok()?;
+            i32::from_str_radix(text, 16).ok()
+        };
+        let hex4 = |s: &[u8]| -> Option<i32> {
+            let text = std::str::from_utf8(&s[1..5]).ok()?;
+            i32::from_str_radix(text, 16).ok()
+        };
+        let hex5 = |s: &[u8]| -> Option<i32> {
+            let text = std::str::from_utf8(&s[1..6]).ok()?;
+            i32::from_str_radix(text, 16).ok()
+        };
+        if ('0'..='9').contains(&c) || ('a'..='f').contains(&c) {
+            Some((1, vec![c.to_digit(16)? as i32]))
+        } else if c == '-' {
+            Some((3, vec![hex2(input)?]))
+        } else if c == '+' {
+            Some((4, vec![hex3(input)?]))
+        } else if c == '=' {
+            Some((4, vec![hex3(input)? + 4096]))
+        } else if c == '%' || c == '@' {
+            Some((4, vec![hex3(input)? + 8192]))
+        } else if c == '*' {
+            Some((5, vec![hex4(input)? + 12240]))
+        } else if c == '$' {
+            Some((6, vec![hex5(input)? + 77776]))
+        } else {
+            None
+        }
+    }
+}
+
+fn to_hex(v: i32) -> u8 {
+    if v < 10 {
+        b'0' + v as u8
+    } else {
+        b'a' + (v - 10) as u8
+    }
+}
+
+/// セル1マスの状態: None = 白マス, Some(-2) = 黒マス, Some(n>=0) = 数字付き白マス
+fn cell_combinator() -> impl Combinator<Option<i32>> {
+    Choice::new(vec![
+        Box::new(Optionalize::new(Number16)),
+        Box::new(Dict::new(Some(-2), ".")),
+        Box::new(Spaces::new(None, 'g')),
+    ])
+}
+
+fn pzpr_combinator() -> impl Combinator<(
+    Vec<Vec<Option<i32>>>,
+    graph::InnerGridEdges<Vec<Vec<bool>>>,
+)> {
+    Size::new(Tuple2::new(ContextBasedGrid::new(cell_combinator()), Rooms))
+}
+
+fn cells_from_problem(
+    clues: &[Vec<Option<i32>>],
+    has_block: &[Vec<bool>],
+) -> Vec<Vec<Option<i32>>> {
+    clues
+        .iter()
+        .zip(has_block.iter())
+        .map(|(row_c, row_b)| {
+            row_c
+                .iter()
+                .zip(row_b.iter())
+                .map(|(&c, &b)| if b { Some(-2) } else { c })
+                .collect()
+        })
+        .collect()
+}
+
+fn problem_from_cells(
+    cells: &[Vec<Option<i32>>],
+    borders: graph::InnerGridEdges<Vec<Vec<bool>>>,
+) -> Option<Problem> {
+    let (h, w) = borders.base_shape();
+    if cells.len() != h || cells.iter().any(|row| row.len() != w) {
+        return None;
+    }
+    let mut clues = vec![vec![None; w]; h];
+    let mut has_block = vec![vec![false; w]; h];
+    for y in 0..h {
+        for x in 0..w {
+            match cells[y][x] {
+                None => (),
+                Some(-2) => has_block[y][x] = true,
+                Some(n) => clues[y][x] = Some(n),
+            }
+        }
+    }
+    Some((borders, clues, has_block))
+}
+
 pub fn deserialize_problem(url: &str) -> Option<Problem> {
+    // pzprv3 format
+    if let Some(problem) = url_to_problem(pzpr_combinator(), &["akari-regional"], url)
+        .and_then(|(cells, borders)| problem_from_cells(&cells, borders))
+    {
+        return Some(problem);
+    }
+
+    // kudamono (paper-puzzle-player) format
     let parsed = get_kudamono_url_info_detailed(url)?;
     let (width, height) = parse_kudamono_dimension(parsed.get("W")?)?;
 
@@ -176,6 +331,18 @@ pub fn deserialize_problem(url: &str) -> Option<Problem> {
     }
 
     Some((border, clues, has_block))
+}
+
+pub fn serialize_problem(problem: &Problem) -> Option<String> {
+    let (borders, clues, has_block) = problem;
+    let (h, w) = borders.base_shape();
+
+    problem_to_url_with_context(
+        pzpr_combinator(),
+        "akari-regional",
+        (cells_from_problem(clues, has_block), borders.clone()),
+        &Context::sized(h, w),
+    )
 }
 
 #[cfg(test)]
@@ -238,9 +405,18 @@ mod tests {
     }
 
     #[test]
-    fn test_akari_regions_serializer() {
+    fn test_akari_regions_serializer_kudamono() {
         let problem = problem_for_tests();
         let url = "https://pedros.works/paper-puzzle-player?W=6x5&L=z7z6z8&L-N=(2)3(2)1(1)15(0)4&SIE=9UL3UU9RURR1U4U5R&G=akari-regional";
         assert_eq!(deserialize_problem(url), Some(problem));
+    }
+
+    #[test]
+    fn test_akari_regions_serializer_pzpr() {
+        let problem = problem_for_tests();
+        let url = serialize_problem(&problem).expect("serialize");
+        assert!(url.contains("akari-regional/"));
+        let restored = deserialize_problem(&url).expect("deserialize");
+        assert_eq!(restored, problem);
     }
 }
