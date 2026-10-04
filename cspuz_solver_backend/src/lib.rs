@@ -228,10 +228,34 @@ mod tests {
 
     #[test]
     fn solve_problem_dispatches_torch() {
+        // 十字の木: 唯一解。黒マスは塗り、白マスは・でマークされる
         let response =
-            solve_problem_json_from_bytes(b"https://puzz.link/p?torch/5/5/m1o0m");
+            solve_problem_json_from_bytes(b"https://puzz.link/p?torch/5/5/h0i010i0r");
         let response = json::parse(&response).unwrap();
         assert_eq!(response["status"].as_str(), Some("ok"));
+        assert_eq!(response["description"]["isUnique"], true);
+
+        let data: Vec<_> = response["description"]["data"].members().collect();
+        let fills: Vec<_> = data
+            .iter()
+            .filter(|d| {
+                d["color"].as_str() == Some("green") && d["item"].as_str() == Some("fill")
+            })
+            .map(|d| (d["y"].as_usize().unwrap(), d["x"].as_usize().unwrap()))
+            .collect();
+        assert_eq!(
+            fills,
+            vec![(1, 5), (3, 3), (3, 5), (3, 7), (5, 5)]
+        );
+
+        let dots: Vec<_> = data
+            .iter()
+            .filter(|d| {
+                d["color"].as_str() == Some("green") && d["item"].as_str() == Some("dot")
+            })
+            .map(|d| (d["y"].as_usize().unwrap(), d["x"].as_usize().unwrap()))
+            .collect();
+        assert_eq!(dots.len(), 25 - fills.len());
     }
 
     #[test]

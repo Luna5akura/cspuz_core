@@ -19,9 +19,16 @@ pub fn solve(url: &str) -> Result<Board, &'static str> {
                 }
             }
             if let Some(b) = is_black[y][x] {
-                if b {
-                    board.push(Item::cell(y, x, "green", ItemKind::Fill));
-                }
+                board.push(Item::cell(
+                    y,
+                    x,
+                    "green",
+                    if b {
+                        ItemKind::Fill
+                    } else {
+                        ItemKind::Dot
+                    },
+                ));
             }
         }
     }
