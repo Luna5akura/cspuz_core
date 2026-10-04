@@ -14,6 +14,28 @@ use cspuz_core::custom_constraints::SimpleCustomConstraint;
 ///
 /// 格子: セル (x,y) は x+y が偶数なら△、奇数なら▽。
 /// 隣接: 左右は常に隣接。上下は△なら下、▽なら上とだけ隣接する。
+///
+/// 盤面の形: 頂点が上向きの大きな正三角形。盤面サイズ(h,w)から
+/// 三角形の領域を決める。頂点のセルは△(x+yが偶数)になるように、
+/// 頂点の列apexは偶数に丸める。白と灰色の総数が一致する必要が
+/// あるため、三角形の行数rowsは偶数に丸める。
+fn tri_region(h: usize, w: usize) -> (usize, usize) {
+    let mut apex = (w - 1) / 2;
+    if apex % 2 == 1 {
+        apex -= 1;
+    }
+    let mut rows = h.min(apex + 1).min(w - apex);
+    if rows % 2 == 1 {
+        rows -= 1;
+    }
+    (apex, rows)
+}
+
+fn tri_in_region(h: usize, w: usize, y: usize, x: usize) -> bool {
+    let (apex, rows) = tri_region(h, w);
+    y < rows && x + y >= apex && x <= apex + y
+}
+
 pub fn solve_tridbchoco(
     color: &[Vec<i32>],
     num: &[Vec<Option<i32>>],
@@ -48,6 +70,22 @@ pub fn solve_tridbchoco(
         decision_stack: vec![],
         border_values: vec![None; borders.vars.len()],
     };
+
+    // 事前チェック: 各ブロックは白と灰色のカタマリを1つずつ、同じ
+    // 大きさで含むので、盤内の灰色マスの数は盤内の全マスの数の
+    // ちょうど半分でなければならない。
+    let (_, region_rows) = tri_region(h, w);
+    let mut grey_count = 0;
+    for y in 0..h {
+        for x in 0..w {
+            if tri_in_region(h, w, y, x) && color[y][x] == 1 {
+                grey_count += 1;
+            }
+        }
+    }
+    if grey_count * 2 != region_rows * region_rows {
+        return None;
+    }
 
     solver.add_custom_constraint(Box::new(constraint), borders.vars.clone());
 
@@ -162,18 +200,19 @@ impl TridbchocoConstraint {
     }
 
     fn tri_neighbors(&self, y: usize, x: usize) -> Vec<(usize, usize)> {
+        let (h, w) = (self.height, self.width);
         let mut ret = vec![];
-        if x > 0 {
+        if x > 0 && tri_in_region(h, w, y, x - 1) {
             ret.push((y, x - 1));
         }
-        if x + 1 < self.width {
+        if x + 1 < w && tri_in_region(h, w, y, x + 1) {
             ret.push((y, x + 1));
         }
         if (x + y) % 2 == 0 {
-            if y + 1 < self.height {
+            if y + 1 < h && tri_in_region(h, w, y + 1, x) {
                 ret.push((y + 1, x));
             }
-        } else if y > 0 {
+        } else if y > 0 && tri_in_region(h, w, y - 1, x) {
             ret.push((y - 1, x));
         }
         ret
@@ -212,6 +251,10 @@ impl TridbchocoConstraint {
 
         for y in 0..h {
             for x in 0..w {
+                if !tri_in_region(h, w, y, x) {
+                    group_id[(y, x)] = usize::MAX - 1;
+                    continue;
+                }
                 if group_id[(y, x)] != !0 {
                     continue;
                 }
@@ -276,6 +319,9 @@ impl SimpleCustomConstraint for TridbchocoConstraint {
         let mut punit_adj = vec![vec![]; punits.len()];
         for y in 0..h {
             for x in 0..w {
+                if !tri_in_region(h, w, y, x) {
+                    continue;
+                }
                 for &(y2, x2) in &self.tri_neighbors(y, x) {
                     let i = punit_id[(y, x)];
                     let j = punit_id[(y2, x2)];
@@ -302,7 +348,8 @@ impl SimpleCustomConstraint for TridbchocoConstraint {
                 let pid = punit_id[(y, x)];
                 if punit_by_color[c] == !0 {
                     punit_by_color[c] = pid;
-                } else if punit_by_color[c] != pid {                    return Some(self.current_reason());
+                } else if punit_by_color[c] != pid {
+                    return Some(self.current_reason());
                 }
                 size_by_color[c] += 1;
                 if let Some(n) = self.cell_num[(y, x)] {
@@ -315,9 +362,11 @@ impl SimpleCustomConstraint for TridbchocoConstraint {
             }
 
             // 潜在ユニットが相手の色の大きさに到達できない
-            if punit_by_color[0] != !0 && punits[punit_by_color[0]].len() < size_by_color[1] {                return Some(self.current_reason());
+            if punit_by_color[0] != !0 && punits[punit_by_color[0]].len() < size_by_color[1] {
+                return Some(self.current_reason());
             }
-            if punit_by_color[1] != !0 && punits[punit_by_color[1]].len() < size_by_color[0] {                return Some(self.current_reason());
+            if punit_by_color[1] != !0 && punits[punit_by_color[1]].len() < size_by_color[0] {
+                return Some(self.current_reason());
             }
 
             if let Some(n) = num {
@@ -327,7 +376,8 @@ impl SimpleCustomConstraint for TridbchocoConstraint {
                 // 潜在ユニットが数字に到達できない
                 for c in 0..2 {
                     if punit_by_color[c] != !0 && n > punits[punit_by_color[c]].len() {
-                        if has_num[c] || size_by_color[1 - c] > 0 {                            return Some(self.current_reason());
+                        if has_num[c] || size_by_color[1 - c] > 0 {
+                            return Some(self.current_reason());
                         }
                     }
                 }
@@ -337,10 +387,14 @@ impl SimpleCustomConstraint for TridbchocoConstraint {
         // 同じブロック内の隣接セル間の壁
         for y in 0..h {
             for x in 0..w {
+                if !tri_in_region(h, w, y, x) {
+                    continue;
+                }
                 for &(y2, x2) in &self.tri_neighbors(y, x) {
                     if block_id[(y, x)] == block_id[(y2, x2)]
                         && self.border_state(y, x, y2, x2) == BorderState::Wall
-                    {                        return Some(self.current_reason());
+                    {
+                        return Some(self.current_reason());
                     }
                 }
             }
@@ -367,12 +421,53 @@ impl SimpleCustomConstraint for TridbchocoConstraint {
                     break 'outer;
                 }
             }
-            if !ok {                return Some(self.current_reason());
+            if !ok {
+                return Some(self.current_reason());
             }
         }
 
         None
     }
+}
+
+// 三角形格子(セルの隣接グラフ)の合同変換 12種。
+// (x,y) -> ((a*x+b*y+tx)/2, (c*x+d*y+ty)/2)
+// 平行移動(tx,ty)は x+y の偶奇(セルの向き)によって異なる。
+fn tri_apply_transform(
+    p: (i32, i32),
+    a: i32,
+    b: i32,
+    c: i32,
+    d: i32,
+    t_up: (i32, i32),
+    t_down: (i32, i32),
+) -> (i32, i32) {
+    // p は (y, x) の順。変換の係数は (x, y) 座標系で定義されているので、
+    // 入れ替えて計算し、結果も (y, x) の順で返す
+    let (y, x) = p;
+    let t = if (x + y) % 2 == 0 { t_up } else { t_down };
+    let x2 = (a * x + b * y + t.0) / 2;
+    let y2 = (c * x + d * y + t.1) / 2;
+    (y2, x2)
+}
+
+fn tri_apply_map(i: usize, p: (i32, i32)) -> (i32, i32) {
+    let maps: [(i32, i32, i32, i32, (i32, i32), (i32, i32)); 12] = [
+        (2, 0, 0, 2, (0, 0), (0, 0)), // 恒等変換
+        (-2, 0, 0, 2, (0, 0), (0, 0)), // 鏡映
+        (-1, -3, 1, -1, (0, 0), (1, 1)), // 120°回転系
+        (-1, 3, -1, -1, (0, 0), (-1, 1)),
+        (1, -3, -1, -1, (0, 0), (1, 1)),
+        (1, 3, 1, -1, (0, 0), (-1, 1)),
+        (-2, 0, 0, -2, (0, 2), (0, 2)), // 180°回転
+        (-1, -3, -1, 1, (0, 2), (1, 1)), // 60°回転系
+        (-1, 3, 1, 1, (0, -2), (-1, -3)),
+        (1, -3, 1, 1, (0, 2), (1, 1)),
+        (1, 3, -1, 1, (0, -2), (-1, -3)),
+        (2, 0, 0, -2, (0, 2), (0, 2)), // 鏡映
+    ];
+    let (a, b, c, d, t_up, t_down) = maps[i];
+    tri_apply_transform(p, a, b, c, d, t_up, t_down)
 }
 
 // 12変換のいずれかで a のセルがすべて b のセルに収まるか
@@ -390,32 +485,26 @@ fn is_congruent_into(a: &[(usize, usize)], b: &[(usize, usize)]) -> bool {
         .collect();
     let pts: Vec<(i32, i32)> = a.iter().map(|&(y, x)| (y as i32, x as i32)).collect();
 
-    let rots = [
-        |p: (i32, i32)| (p.0, p.1),
-        |p: (i32, i32)| (p.0 - p.1, p.0 + p.1),
-        |p: (i32, i32)| (-p.1, p.0),
-        |p: (i32, i32)| (-p.0, -p.1),
-        |p: (i32, i32)| (p.1 - p.0, -p.0),
-        |p: (i32, i32)| (p.1, -p.0 - p.1),
-    ];
-    let mirror = |p: (i32, i32)| (p.0 + p.1, -p.1);
-
-    for m in 0..2 {
-        for r in 0..6 {
-            let tr = |p: (i32, i32)| -> (i32, i32) {
-                let p = if m == 1 { mirror(p) } else { p };
-                rots[r](p)
-            };
-            let transformed: Vec<(i32, i32)> = pts.iter().map(|&p| tr(p)).collect();
-            let mut min_y = i32::MAX;
-            let mut min_x = i32::MAX;
-            for &(y, x) in &transformed {
-                min_y = min_y.min(y);
-                min_x = min_x.min(x);
-            }
+    for i in 0..12 {
+        let transformed: Vec<(i32, i32)> = pts.iter().map(|&p| tri_apply_map(i, p)).collect();
+        let mut min_y = i32::MAX;
+        let mut min_x = i32::MAX;
+        for &(y, x) in &transformed {
+            min_y = min_y.min(y);
+            min_x = min_x.min(x);
+        }
+        let norm: Vec<(i32, i32)> = transformed
+            .iter()
+            .map(|&(y, x)| (y - min_y, x - min_x))
+            .collect();
+        // 正規化した形を b の中のどこかに重ねられるか。
+        // 基準点 norm[0] が b の各点に重なる平行移動をすべて試す。
+        for &(by, bx) in &b_set {
+            let ty = by - norm[0].0;
+            let tx = bx - norm[0].1;
             let mut ok = true;
-            for &(y, x) in &transformed {
-                if !b_set.contains(&(y - min_y, x - min_x)) {
+            for &(y, x) in &norm {
+                if !b_set.contains(&(y + ty, x + tx)) {
                     ok = false;
                     break;
                 }
@@ -460,11 +549,25 @@ mod tests {
     use super::*;
 
     fn problem_for_tests() -> Problem {
-        // 2x2: (0,0)と(1,1)が灰色
-        (
-            vec![vec![1, 0], vec![0, 1]],
-            vec![vec![None, None], vec![None, None]],
-        )
+        // 9x4: apex=4, rows=4 の正三角形 (16セル)。
+        // 手で構成した解のある問題:
+        //   灰: (4,0),(5,1),(4,1),(1,3),(2,3),(3,3),(5,2),(6,3)
+        let greys = [
+            (0, 4),
+            (1, 5),
+            (1, 4),
+            (3, 1),
+            (3, 2),
+            (3, 3),
+            (2, 5),
+            (3, 6),
+        ];
+        let mut color = vec![vec![0; 9]; 4];
+        for &(y, x) in &greys {
+            color[y][x] = 1;
+        }
+        let num = vec![vec![None; 9]; 4];
+        (color, num)
     }
 
     #[test]
@@ -472,8 +575,6 @@ mod tests {
         let problem = problem_for_tests();
         let ans = solve_tridbchoco(&problem.0, &problem.1);
         assert!(ans.is_some());
-        // 2x2の三角形格子には2つの解(縦分割/横分割)があり、
-        // どちらも正しい分割になっている
     }
 
     #[test]
@@ -483,5 +584,81 @@ mod tests {
         assert!(url.contains("tridbchoco/"));
         let restored = deserialize_problem(&url).expect("deserialize");
         assert_eq!(restored, problem);
+    }
+}
+
+#[cfg(test)]
+mod debug_user_answer {
+    use super::*;
+
+    // 行き止まりのある境界線の組み合わせでも正しく合同と判定できること
+    // (手入力された解答例: 17x5, 灰8マス, 境界線4本)
+    #[test]
+    fn test_user_answer_constraint() {
+        let greys = [
+            (2, 10),
+            (3, 5),
+            (3, 6),
+            (3, 7),
+            (3, 8),
+            (3, 9),
+            (3, 10),
+            (3, 11),
+        ];
+        let mut color = vec![vec![0; 17]; 5];
+        for &(y, x) in &greys {
+            color[y][x] = 1;
+        }
+        let num: Vec<Vec<Option<i32>>> = vec![vec![None; 17]; 5];
+        let h = 5;
+        let w = 17;
+        let (apex, rows) = tri_region(h, w);
+        assert_eq!((apex, rows), (8, 4));
+
+        let mut constraint = TridbchocoConstraint {
+            height: h,
+            width: w,
+            cell_color: Grid::from_vecs(&color),
+            cell_num: Grid::from_vecs(
+                &(num.iter()
+                    .map(|row| row.iter().map(|&n| n.map(|n| n as usize)).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()),
+            ),
+            decision_stack: vec![],
+            border_values: vec![None; 0],
+        };
+        // border_values の長さ = hor (5*16=80) + ver (上セルが△の数)
+        let mut ver_count = 0;
+        for y in 0..(h - 1) {
+            for x in 0..w {
+                if (x + y) % 2 == 0 {
+                    ver_count += 1;
+                }
+            }
+        }
+        let nvars = h * (w - 1) + ver_count;
+        constraint.border_values = vec![Some(false); nvars];
+        // ユーザーの解: 壁4本, それ以外は接続
+        let walls_hor = [(1, 8), (2, 7), (3, 9)];
+        for &(y, x) in &walls_hor {
+            let idx = constraint.hor_var(y, x);
+            constraint.border_values[idx] = Some(true);
+        }
+        let walls_ver = [(2, 8)];
+        for &(y, x) in &walls_ver {
+            assert!((x + y) % 2 == 0);
+            let idx = constraint.ver_var(y, x);
+            constraint.border_values[idx] = Some(true);
+        }
+
+        match constraint.find_inconsistency() {
+            Some(reason) => {
+                println!("INCONSISTENT: {:?}", reason);
+            }
+            None => {
+                println!("CONSISTENT");
+            }
+        }
+        assert!(constraint.find_inconsistency().is_none());
     }
 }
