@@ -220,6 +220,7 @@ puzzle_list!(puzz_link,
     (yinyang, ["yinyang"], "Yin-Yang", "しろまるくろまる"),
     (yinyang_mines, ["yinyangmines"], "Yin-Yang Mines", "Yin-Yang Mines"),
     (snaky_fillomino, ["snakyfillomino"], "Snaky Fillomino", "Snaky Fillomino"),
+    (torch, ["torch"], "Torch", "Torch"),
 );
 
 #[rustfmt::skip]

@@ -227,6 +227,14 @@ mod tests {
     }
 
     #[test]
+    fn solve_problem_dispatches_torch() {
+        let response =
+            solve_problem_json_from_bytes(b"https://puzz.link/p?torch/5/5/m1o0m");
+        let response = json::parse(&response).unwrap();
+        assert_eq!(response["status"].as_str(), Some("ok"));
+    }
+
+    #[test]
     fn solve_problem_dispatches_snaky_fillomino() {
         let response =
             solve_problem_json_from_bytes(b"https://puzz.link/p?snakyfillomino/5/5/91l3g4g1i24m");

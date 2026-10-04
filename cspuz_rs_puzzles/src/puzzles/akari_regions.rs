@@ -2,7 +2,7 @@ use cspuz_rs::graph;
 use cspuz_rs::serializer::{
     get_kudamono_url_info_detailed, parse_kudamono_dimension, problem_to_url_with_context,
     url_to_problem, Choice, Combinator, Context, ContextBasedGrid, DecInt, Dict, KudamonoBorder,
-    KudamonoGrid, Optionalize, PrefixAndSuffix, Rooms, Size, Spaces, Tuple2,
+    KudamonoGrid, Number16, Optionalize, PrefixAndSuffix, Rooms, Size, Spaces, Tuple2,
 };
 use cspuz_rs::solver::{count_true, BoolVar, Solver};
 
@@ -151,85 +151,6 @@ pub type Problem = (
 //   run   = ordinary white cells
 // <borders> uses the standard pzpr border encoding (base-32, 5 cells/char).
 //------------------------------------------------------------------------------
-
-/// pzpr の writeNumber16/readNumber16 と互換の数字コンビネータ
-struct Number16;
-
-impl Combinator<i32> for Number16 {
-    fn serialize(&self, _ctx: &Context, input: &[i32]) -> Option<(usize, Vec<u8>)> {
-        if input.is_empty() {
-            return None;
-        }
-        let v = input[0];
-        if !(0..=1126351).contains(&v) {
-            return None;
-        }
-        let ret = if v < 16 {
-            vec![to_hex(v)]
-        } else if v < 256 {
-            format!("-{:02x}", v).into_bytes()
-        } else if v < 4096 {
-            format!("+{:03x}", v).into_bytes()
-        } else if v < 8192 {
-            format!("={:03x}", v - 4096).into_bytes()
-        } else if v < 12240 {
-            format!("%{:03x}", v - 8192).into_bytes()
-        } else if v < 77776 {
-            format!("*{:04x}", v - 12240).into_bytes()
-        } else {
-            format!("${:05x}", v - 77776).into_bytes()
-        };
-        Some((1, ret))
-    }
-
-    fn deserialize(&self, _ctx: &Context, input: &[u8]) -> Option<(usize, Vec<i32>)> {
-        if input.is_empty() {
-            return None;
-        }
-        let c = input[0] as char;
-        let hex2 = |s: &[u8]| -> Option<i32> {
-            let text = std::str::from_utf8(&s[1..3]).ok()?;
-            i32::from_str_radix(text, 16).ok()
-        };
-        let hex3 = |s: &[u8]| -> Option<i32> {
-            let text = std::str::from_utf8(&s[1..4]).ok()?;
-            i32::from_str_radix(text, 16).ok()
-        };
-        let hex4 = |s: &[u8]| -> Option<i32> {
-            let text = std::str::from_utf8(&s[1..5]).ok()?;
-            i32::from_str_radix(text, 16).ok()
-        };
-        let hex5 = |s: &[u8]| -> Option<i32> {
-            let text = std::str::from_utf8(&s[1..6]).ok()?;
-            i32::from_str_radix(text, 16).ok()
-        };
-        if ('0'..='9').contains(&c) || ('a'..='f').contains(&c) {
-            Some((1, vec![c.to_digit(16)? as i32]))
-        } else if c == '-' {
-            Some((3, vec![hex2(input)?]))
-        } else if c == '+' {
-            Some((4, vec![hex3(input)?]))
-        } else if c == '=' {
-            Some((4, vec![hex3(input)? + 4096]))
-        } else if c == '%' || c == '@' {
-            Some((4, vec![hex3(input)? + 8192]))
-        } else if c == '*' {
-            Some((5, vec![hex4(input)? + 12240]))
-        } else if c == '$' {
-            Some((6, vec![hex5(input)? + 77776]))
-        } else {
-            None
-        }
-    }
-}
-
-fn to_hex(v: i32) -> u8 {
-    if v < 10 {
-        b'0' + v as u8
-    } else {
-        b'a' + (v - 10) as u8
-    }
-}
 
 /// セル1マスの状態: None = 白マス, Some(-2) = 黒マス, Some(n>=0) = 数字付き白マス
 fn cell_combinator() -> impl Combinator<Option<i32>> {
