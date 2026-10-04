@@ -221,6 +221,7 @@ puzzle_list!(puzz_link,
     (yinyang_mines, ["yinyangmines"], "Yin-Yang Mines", "Yin-Yang Mines"),
     (snaky_fillomino, ["snakyfillomino"], "Snaky Fillomino", "Snaky Fillomino"),
     (torch, ["torch"], "Torch", "Torch"),
+    (tridbchoco, ["tridbchoco"], "Triangular Double Choco", "Triangular Double Choco"),
 );
 
 #[rustfmt::skip]

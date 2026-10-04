@@ -142,6 +142,7 @@ pub mod torch;
 pub mod timebomb;
 pub mod tontonbeya;
 pub mod tricklayer;
+pub mod tridbchoco;
 pub mod walkwalk;
 pub mod waterwalk;
 pub mod wolves_and_sheep;
