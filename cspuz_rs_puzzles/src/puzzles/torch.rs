@@ -168,6 +168,29 @@ mod tests {
     }
 
     #[test]
+    fn test_torch_unique_problem() {
+        // 十字の木: 中央の1以外はすべて数字0の端点
+        let mut problem = vec![vec![None; 5]; 5];
+        problem[0][2] = Some(0);
+        problem[1][1] = Some(0);
+        problem[1][2] = Some(1);
+        problem[1][3] = Some(0);
+        problem[2][2] = Some(0);
+        let ans = solve_torch(&problem);
+        assert!(ans.is_some());
+        let ans = ans.unwrap();
+
+        let expected = crate::util::tests::to_option_bool_2d([
+            [0, 0, 1, 0, 0],
+            [0, 1, 1, 1, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+        ]);
+        assert_eq!(ans, expected);
+    }
+
+    #[test]
     fn test_torch_serializer() {
         let problem = problem_for_tests();
         let url = serialize_problem(&problem).expect("serialize");
