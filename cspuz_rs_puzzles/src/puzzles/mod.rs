@@ -1,6 +1,9 @@
 pub mod akari;
+pub mod meidjuluk;
+pub mod dotchi2;
 pub mod akari_regions;
 pub mod akari_rgb;
+pub mod anglers;
 pub mod akichiwake;
 pub mod aqre;
 pub mod aquapelago;
