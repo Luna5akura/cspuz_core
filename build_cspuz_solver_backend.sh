@@ -40,4 +40,8 @@ fi
 if [ -d ../pzprjs/dist/wasm ]; then
     cp build/cspuz_solver_backend/cspuz_solver_backend.js ../pzprjs/dist/wasm/cspuz_solver_backend.js
     cp build/cspuz_solver_backend/cspuz_solver_backend.wasm ../pzprjs/dist/wasm/cspuz_solver_backend.wasm
+    # The emscripten glue resolves its wasm binary as
+    # "cspuz_solver_backend_wasm.wasm" (via new URL(..., import.meta.url)),
+    # so keep a copy under that name as well.
+    cp build/cspuz_solver_backend/cspuz_solver_backend.wasm ../pzprjs/dist/wasm/cspuz_solver_backend_wasm.wasm
 fi
